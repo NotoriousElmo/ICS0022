@@ -22,3 +22,6 @@ target/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Compiled binary
+secure_files/secure_files

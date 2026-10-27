@@ -1,10 +1,10 @@
-# Secure File Encryption & Management System (SFE)
+# secure_files
 
-## Project Scope
-A command-line interface (CLI) tool for secure encrypted file storage, retrieval, and cryptographic deletion. SFE utilizes a local envelope encryption architecture (MEK/DEK) with zero-knowledge password proofs to ensure data confidentiality and integrity against offline, physical, and local privilege escalation threats.
+A small C17 CLI that encrypts files with libsodium and can "shred" them by destroying their key.
 
-## Technology Stack & Library Justifications
+`passphrase -> Argon2id -> KEK -> unwraps MEK -> unwraps per-file DEK -> XChaCha20-Poly1305`
 
+<<<<<<< HEAD
 * **Language:** `Rust` 
   * *Justification:* Enforces strict memory safety guarantees (ownership and borrowing) at compile-time, mathematically eliminating buffer overflows, use-after-free, and dangling pointer vulnerabilities inherent in C/C++.
 * **Cryptography:** `chacha20poly1305`
@@ -17,9 +17,13 @@ A command-line interface (CLI) tool for secure encrypted file storage, retrieval
   * *Justification:* Wraps the operating system's Cryptographically Secure Pseudorandom Number Generator (CSPRNG) for secure key and nonce generation.
 * **CLI Parsing:** `clap`
   * *Justification:* Provides robust, secure parsing of user input and paths, forming the first layer of defense against injection attacks.
+=======
+## Build
+>>>>>>> aa137f1 (initial work on the encryptor)
 
-## Build & Setup Instructions
+Needs a C compiler and libsodium on Linux, macOS or WSL (not native Windows).
 
+<<<<<<< HEAD
 These instructions assume execution on a clean machine (Linux/macOS/Windows).
 
 ### 1. Prerequisites
@@ -59,3 +63,23 @@ The compiled binary will be located at `target/release/sfe`.
 ```bash
 ./target/release/sfe shred --user alice /path/to/target.txt.enc
 ```
+=======
+```bash
+sudo apt install build-essential libsodium-dev   # macOS: brew install libsodium
+cd secure_files
+gcc -std=c17 -Wall -Wextra src/main.c -o secure_files -lsodium
+```
+
+## Use
+
+```bash
+./secure_files init    --user alice            # create profile (asks for passphrase twice)
+./secure_files encrypt --user alice notes.txt  # -> notes.txt.enc
+./secure_files decrypt --user alice notes.txt.enc
+./secure_files shred   --user alice notes.txt.enc   # deletes the key and the .enc file
+```
+
+Keys are stored in `$SFE_HOME`, or `~/.secure_files` if unset. Shredding removes a file's key record, so copies of its `.enc` file can no longer be decrypted.
+
+This is a minimal skeleton: no hardening, whole files are read into memory, and the passphrase is read from stdin.
+>>>>>>> aa137f1 (initial work on the encryptor)
