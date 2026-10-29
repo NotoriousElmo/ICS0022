@@ -14,7 +14,7 @@ wsl -d Ubuntu
 sudo apt update
 sudo apt install build-essential libsodium-dev
 cd secure_files
-gcc -std=c17 -Wall -Wextra src/main.c -o secure_files -lsodium
+gcc -std=c17 -Wall -Wextra main.c -o secure_files -lsodium
 ```
 
 ## Use
