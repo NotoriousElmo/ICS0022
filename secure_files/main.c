@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <sodium.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,9 +20,20 @@
 #define SALT crypto_pwhash_SALTBYTES
 #define PROFILE_SIZE (SALT + WRAPPED)
 
+#define STREAM_HEADER crypto_secretstream_xchacha20poly1305_HEADERBYTES
+#define STREAM_TAG crypto_secretstream_xchacha20poly1305_ABYTES
+#define STREAM_FINAL crypto_secretstream_xchacha20poly1305_TAG_FINAL
+#define MAGIC "SF01"
+#define LEN_OF_MAGIC (sizeof(MAGIC) - 1)
+#define FILE_ID_SIZE 16
+#define FILE_ID_AT LEN_OF_MAGIC
+#define STREAM_AT (FILE_ID_AT + FILE_ID_SIZE)
+#define HEADER_SIZE (STREAM_AT + STREAM_HEADER)
+
 #define PATH_SIZE 1024        // longest handleable path in chars
 #define PASSPHRASE_SIZE 256   // passphrase buffer size
 #define MAXIMUM_FILE_SIZE (1024UL * 1024UL * 1024UL)  // 1 GiB
+#define CHUNK_SIZE 65536
 
 static _Noreturn void shutdown(const char *const msg)
 {
@@ -295,11 +308,196 @@ static bool is_valid_username(const char *const username)
         && strspn(username, allowed_characters) == username_len;
 }
 
+static ssize_t read_full(const int file_descriptor, unsigned char *const buffer, const size_t buffer_length)
+{
+    size_t read_len = 0;
+    while (read_len < buffer_length) {
+        const ssize_t chunk_length = read(file_descriptor, buffer + read_len, buffer_length - read_len);
+        if (chunk_length < 0 && errno == EINTR) {
+            continue;
+        }
+        if (chunk_length < 0) {
+            return -1;
+        }
+        if (chunk_length == 0) {
+            break;
+        }
+        read_len += (size_t)chunk_length;
+    }
+    return (ssize_t)read_len;
+}
+
+static const char *encrypt_stream(const int input_file_descriptor, const int output_file_descriptor, crypto_secretstream_xchacha20poly1305_state *const state) 
+{
+    unsigned char plain[CHUNK_SIZE];
+    unsigned char cipher[CHUNK_SIZE + STREAM_TAG];
+    unsigned long long cipher_len;
+    const char *error = NULL;
+    bool is_last = false;
+
+    while (!is_last && error == NULL) {
+        const ssize_t plain_len = read_full(input_file_descriptor, plain, sizeof plain);
+
+        if (plain_len < 0) {
+            error = "read_failed";
+            break;
+        }
+        is_last = (size_t)plain_len < sizeof plain;
+
+        if (crypto_secretstream_xchacha20poly1305_push(state, cipher, &cipher_len, plain, (unsigned long long)plain_len, NULL, 0, is_last ? STREAM_FINAL : 0) != 0) {
+            error = "encryption failed";
+        } else if (write_all(output_file_descriptor, cipher, (size_t)cipher_len) != 0) {
+            error = "write failed";
+        }
+    }
+    sodium_memzero(plain, sizeof plain);
+    return error;
+}
+
+static int open_input_file(const char *const file_path, const unsigned long long maximum_size) {
+    struct stat file_status;
+    if (strlen(file_path) == 0 || strlen(file_path) >= PATH_SIZE) {
+        shutdown("invalid file path");
+    }
+    const int file_descriptor = open(file_path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (file_descriptor < 0) {
+        shutdown_with_system_error("cannot open input file");
+    }
+    if (fstat(file_descriptor, &file_status) != 0 || !S_ISREG(file_status.st_mode)) {
+        shutdown("input is not a regular file");
+    }
+    if ((unsigned long long)file_status.st_size > maximum_size) {
+        shutdown("input file is too large");
+    }
+    return file_descriptor;
+}
+
+static void build_the_encrypted_path(char *const encrypted_path, const char *const file_path) {
+    const int written_chars = snprintf(encrypted_path, PATH_SIZE, "%s%s", file_path, ".enc");
+    if (written_chars < 0 || written_chars >= PATH_SIZE) {
+        shutdown("output path is too long");
+    }
+}
+
+static void build_key_path(char *const key_path, const char *const username, const unsigned char *const file_id) {
+    char keys_dir_path[PATH_SIZE];
+    char file_id_hex[FILE_ID_SIZE * 2 + 1];
+    build_keys_dir_path(keys_dir_path, username);
+    require_priv_dir(store_directory());
+    require_priv_dir(keys_dir_path);
+    sodium_bin2hex(file_id_hex, sizeof file_id_hex, file_id, FILE_ID_SIZE);
+
+    const int written_chars = snprintf(key_path, PATH_SIZE, "%s/%s%s", keys_dir_path, file_id_hex, ".key");
+    
+    if (written_chars < 0 || written_chars >= PATH_SIZE) {
+        shutdown("key path is too long");
+    }
+}
+
+static void load_master_key(const char *const username, unsigned char master_key[KEY])
+{
+    char profile_path[PATH_SIZE];
+    char password[PASSPHRASE_SIZE];
+    unsigned char profile[PROFILE_SIZE];
+    unsigned char key_encryption_key[KEY];
+
+    build_profile_path(profile_path, username);
+
+    const int profile_file_descriptor = open(profile_path, O_RDONLY | O_NOFOLLOW);
+
+    if (profile_file_descriptor < 0) {
+        shutdown_with_system_error("cannot open profile");
+    }
+
+    const ssize_t profile_length = read_full(profile_file_descriptor, profile, sizeof profile);
+
+    close(profile_file_descriptor);
+
+    if (profile_length != (ssize_t)sizeof profile) {
+        shutdown("profile is corrupted");
+    }
+
+    read_password("Enter password: ", password, sizeof password);
+    derive_key_encryption_key(key_encryption_key, password, profile);
+    sodium_memzero(password, sizeof password);
+
+    const int return_code = unwrap_key(master_key, profile + SALT, key_encryption_key, profile, SALT);
+    sodium_memzero(key_encryption_key, sizeof key_encryption_key);
+
+    if (return_code != 0) {
+        shutdown("wrong password or corrupted profile");
+    }
+}
+
 static void encrypt_file(const char *const username, const char *const file_path)
 {
-    (void)username;
-    (void)file_path;
-    shutdown("encrypt is not implemented yet");
+    char encrypted_path[PATH_SIZE];
+    char key_path[PATH_SIZE];
+    unsigned char header[HEADER_SIZE];
+    unsigned char master_key[KEY];
+    unsigned char file_key[KEY];
+    unsigned char wrapped_key[WRAPPED];
+    crypto_secretstream_xchacha20poly1305_state state;
+
+    build_the_encrypted_path(encrypted_path, file_path);
+    require_file_missing(encrypted_path, "output file already exists");
+
+    const int input_file_descriptor = open_input_file(file_path, MAXIMUM_FILE_SIZE);
+
+    memcpy(header, MAGIC, LEN_OF_MAGIC);
+    randombytes_buf(header + FILE_ID_AT, FILE_ID_SIZE);
+    randombytes_buf(file_key, KEY);
+    build_key_path(key_path, username, header + FILE_ID_AT);
+
+    load_master_key(username, master_key);
+
+    const int init_code = crypto_secretstream_xchacha20poly1305_init_push(&state, header + STREAM_AT, file_key);
+    const int wrap_code = wrap_key(wrapped_key, file_key, master_key, header, STREAM_AT);
+
+    sodium_memzero(master_key, sizeof master_key);
+    sodium_memzero(file_key, sizeof file_key);
+
+    if (init_code != 0 || wrap_code != 0) {
+        sodium_memzero(&state, sizeof state);
+        shutdown("could not set up encryption");
+    }
+
+    if (write_new_file(key_path, wrapped_key, sizeof wrapped_key) != 0) {
+        sodium_memzero(&state, sizeof state);
+        shutdown_with_system_error("cannot store file key");
+    }
+
+    const int output_file_descriptor = open(encrypted_path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+
+    if (output_file_descriptor < 0) {
+        const int error_code = errno;
+
+        unlink(key_path);
+        sodium_memzero(&state, sizeof state);
+        errno = error_code;
+        shutdown_with_system_error("cannot create output file");
+    }
+
+    const char *error = write_all(output_file_descriptor, header, sizeof header) != 0 ? "write failed" : encrypt_stream(input_file_descriptor, output_file_descriptor, &state);
+    sodium_memzero(&state, sizeof state);
+
+    if (error == NULL && fsync(output_file_descriptor) != 0) {
+        error = "write failed";
+    }
+
+    if (close(output_file_descriptor) != 0 && error == NULL) {
+        error = "write failed";
+    }
+
+    close(input_file_descriptor);
+
+    if (error != NULL) {
+        unlink(encrypted_path);
+        unlink(key_path);
+        shutdown(error);
+    }
+
+    printf("encrypted to %s\n", encrypted_path);
 }
 
 static void decrypt_file(const char *const username, const char *const file_path)
