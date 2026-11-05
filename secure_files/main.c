@@ -34,6 +34,7 @@
 #define PASSPHRASE_SIZE 256   // passphrase buffer size
 #define MAXIMUM_FILE_SIZE (1024UL * 1024UL * 1024UL)  // 1 GiB
 #define CHUNK_SIZE 65536
+#define MAXIMUM_ENCRYPTED_SIZE (MAXIMUM_FILE_SIZE + HEADER_SIZE + STREAM_TAG * (MAXIMUM_FILE_SIZE / CHUNK_SIZE + 1))  // largest file encrypt can produce
 
 static _Noreturn void shutdown(const char *const msg)
 {
@@ -500,11 +501,142 @@ static void encrypt_file(const char *const username, const char *const file_path
     printf("encrypted to %s\n", encrypted_path);
 }
 
+static void load_wrapped_key(const char *const key_path, unsigned char wrapped_key[WRAPPED])
+{
+    const int key_file_descriptor = open(key_path, O_RDONLY | O_NOFOLLOW);
+
+    if (key_file_descriptor < 0) {
+        shutdown_with_system_error("cannot open file key");
+    }
+
+    const ssize_t key_length = read_full(key_file_descriptor, wrapped_key, WRAPPED);
+
+    close(key_file_descriptor);
+
+    if (key_length != (ssize_t)WRAPPED) {
+        shutdown("file key is corrupted");
+    }
+}
+
+static const char *decrypt_stream(const int input_file_descriptor, const int output_file_descriptor, crypto_secretstream_xchacha20poly1305_state *const state)
+{
+    unsigned char cipher[CHUNK_SIZE + STREAM_TAG];
+    unsigned char plain[CHUNK_SIZE];
+    unsigned long long plain_len;
+    unsigned char tag;
+    const char *error = NULL;
+    bool is_last = false;
+
+    while (!is_last && error == NULL) {
+        const ssize_t cipher_len = read_full(input_file_descriptor, cipher, sizeof cipher);
+
+        if (cipher_len < 0) {
+            error = "read failed";
+            break;
+        }
+
+        // encryption only emits a short chunk as the final one, so a short read is the end of the file
+        is_last = (size_t)cipher_len < sizeof cipher;
+
+        if ((size_t)cipher_len < STREAM_TAG) {
+            error = "encrypted file is truncated";
+        } else if (crypto_secretstream_xchacha20poly1305_pull(state, plain, &plain_len, &tag, cipher, (unsigned long long)cipher_len, NULL, 0) != 0) {
+            error = "encrypted file is corrupted or has been modified";
+        } else if (tag != (is_last ? STREAM_FINAL : 0)) {
+            error = "encrypted file is truncated or malformed";
+        } else if (write_all(output_file_descriptor, plain, (size_t)plain_len) != 0) {
+            error = "write failed";
+        }
+    }
+    sodium_memzero(plain, sizeof plain);
+
+    return error;
+}
+
+static void build_decrypted_file_path(char *const decrypted_path, const char *const file_path) {
+    static const char encrypted_suffix[] = ".enc";
+    const size_t suffix_len = sizeof encrypted_suffix - 1;
+    const int written_chars = snprintf(decrypted_path, PATH_SIZE, "%s", file_path);
+
+    if (written_chars < 0 || written_chars >= PATH_SIZE) {
+        shutdown("invalid file path");
+    }
+
+    const size_t path_len = (size_t)written_chars;
+
+    if (path_len <= suffix_len || strcmp(decrypted_path + path_len - suffix_len, encrypted_suffix) != 0 || decrypted_path[path_len - suffix_len - 1] == '/') {
+        shutdown("input file must be named NAME.enc");
+    }
+
+    decrypted_path[path_len - suffix_len] = '\0';
+}
+
 static void decrypt_file(const char *const username, const char *const file_path)
 {
-    (void)username;
-    (void)file_path;
-    shutdown("decrypt is not implemented yet");
+    char decrypted_path[PATH_SIZE];
+    char key_path[PATH_SIZE];
+    unsigned char header[HEADER_SIZE];
+    unsigned char master_key[KEY];
+    unsigned char file_key[KEY];
+    unsigned char wrapped_key[WRAPPED];
+    crypto_secretstream_xchacha20poly1305_state state;
+
+    build_decrypted_file_path(decrypted_path, file_path);
+
+    require_file_missing(decrypted_path, "decrypted file already exists");
+
+    const int input_file_descriptor = open_input_file(file_path, MAXIMUM_ENCRYPTED_SIZE);
+
+    const ssize_t header_length = read_full(input_file_descriptor, header, sizeof header);
+
+    if (header_length != (ssize_t)sizeof header || memcmp(header, MAGIC, LEN_OF_MAGIC) != 0) {
+        shutdown("input is not an encrypted file");
+    }
+
+    build_key_path(key_path, username, header + FILE_ID_AT);
+    load_wrapped_key(key_path, wrapped_key);
+    load_master_key(username, master_key);
+
+    const int unwrap_code = unwrap_key(file_key, wrapped_key, master_key, header, STREAM_AT);    // a key file belonging to another file is rejected
+
+    sodium_memzero(master_key, sizeof master_key);
+
+    if (unwrap_code != 0) {
+        shutdown("cannot unwrap file key, key file or header is corrupted");
+    }
+    const int init_code = crypto_secretstream_xchacha20poly1305_init_pull(&state, header + STREAM_AT, file_key);
+
+    sodium_memzero(file_key, sizeof file_key);
+
+    if (init_code != 0) {
+        sodium_memzero(&state, sizeof state);
+        shutdown("could not set up decryption");
+    }
+    const int output_file_descriptor = open(decrypted_path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    
+    if (output_file_descriptor < 0) {
+        const int error_code = errno;
+        sodium_memzero(&state, sizeof state);
+        errno = error_code;
+        shutdown_with_system_error("cannot create output file");
+    }
+    const char *error = decrypt_stream(input_file_descriptor, output_file_descriptor, &state);
+    sodium_memzero(&state, sizeof state);
+
+    if (error == NULL && fsync(output_file_descriptor) != 0) {
+        error = "write failed";
+    }
+    if (close(output_file_descriptor) != 0 && error == NULL) {
+        error = "write failed";
+    }
+
+    close(input_file_descriptor);
+    if (error != NULL) {
+        unlink(decrypted_path);
+        shutdown(error);
+    }
+
+    printf("decrypted to %s\n", decrypted_path);
 }
 
 static void shred_file(const char *const username, const char *const file_path)

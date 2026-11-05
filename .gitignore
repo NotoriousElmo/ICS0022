@@ -1,27 +1,137 @@
-# Rust build artifacts
-target/
-**/*.rs.bk
+# Object files
+*.o
+*.obj
+*.ko
+*.elf
+*.lo
+*.slo
 
-# Local environment variables & Secrets (Security)
-.env
-*.pem
-*.key
-*.pcap
-*.metadata
+# Precompiled headers
+*.gch
+*.pch
 
-# IDEs and Editors
+# Libraries
+*.lib
+*.a
+*.la
+*.lai
+*.so
+*.so.*
+*.dll
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+*.ilk
+*.map
+
+# Dependency files
+*.d
+
+# Build directories
+build/
+Build/
+bin/
+obj/
+out/
+Debug/
+Release/
+cmake-build-*/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+Testing/
+
+# Autotools
+Makefile.in
+aclocal.m4
+autom4te.cache/
+config.log
+config.status
+configure
+compile
+depcomp
+install-sh
+libtool
+ltmain.sh
+missing
+stamp-h1
+config.h
+config.h.in
+.deps/
+.libs/
+
+# Make (generated)
+# Makefile   # uncomment if your Makefile is generated
+
+# Coverage and profiling
+*.gcno
+*.gcda
+*.gcov
+*.profraw
+*.profdata
+coverage/
+gmon.out
+
+# Sanitizers / debugging artifacts
+core
+core.*
+vgcore.*
+*.log
+
+# Static analysis / tooling caches
+.cache/
+compile_commands.json
+.clangd/
+tags
+TAGS
+cscope.*
+GPATH
+GRTAGS
+GTAGS
+
+# Editors and IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+.vs/
+*.vcxproj.user
+*.suo
+*.user
+*.ncb
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.VC.opendb
 
-# OS generated files
+# OS files
 .DS_Store
-.DS_Store?
-._*
-.Trashes
-ehthumbs.db
 Thumbs.db
+Desktop.ini
 
-# Compiled binary
-secure_files/secure_files
+# Secrets (keep credentials out of version control)
+.env
+*.pem
+*.key

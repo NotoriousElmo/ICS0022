@@ -20,8 +20,21 @@ gcc -std=c17 -Wall -Wextra main.c -o secure_files -lsodium
 ## Use
 
 ```bash
-./secure_files init    --user alice            # create profile
-./secure_files encrypt --user alice notes.txt  # -> notes.txt.enc
-./secure_files decrypt --user alice notes.txt.enc
-./secure_files shred   --user alice notes.txt.enc   # deletes the key and the .enc file
+mkdir -p ~/ics0022
+cp -r /mnt/c/Users/marku/desktop/ics0022/secure_files ~/ics0022/
+cd ~/ics0022/secure_files
+chmod 700 store keys
 ```
+
+```bash
+./secure_files init    --user bob            # create profile
+./secure_files encrypt --user bob notes.txt  # -> notes.txt.enc
+./secure_files decrypt --user bob notes.txt.enc
+./secure_files shred   --user bob notes.txt.enc   # deletes the key and the .enc file
+```
+
+## State after Checkpoint 2
+
+- Can initialise user
+- Can encrypt file
+- Can decrypt file
