@@ -38,3 +38,4 @@ chmod 700 store keys
 - Can initialise user
 - Can encrypt file
 - Can decrypt file
+- Can shred file

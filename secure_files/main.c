@@ -639,11 +639,88 @@ static void decrypt_file(const char *const username, const char *const file_path
     printf("decrypted to %s\n", decrypted_path);
 }
 
-static void shred_file(const char *const username, const char *const file_path)
-{
-    (void)username;
-    (void)file_path;
-    shutdown("shred is not implemented yet");
+static int overwrite_with_random_bytes(const int file_descriptor, const unsigned long long file_length) {
+    unsigned char noise[CHUNK_SIZE];
+    unsigned long long remaining_length = file_length;
+
+    while (remaining_length > 0) {
+        const size_t chunk_length = remaining_length < sizeof noise ? (size_t)remaining_length : sizeof noise;
+
+        randombytes_buf(noise, chunk_length);
+
+        if (write_all(file_descriptor, noise, chunk_length) != 0) {
+            return -1;
+        }
+
+        remaining_length -= chunk_length;
+    }
+
+    return fsync(file_descriptor);
+}
+
+static int overwrite_and_remove_file(const char *const file_path){
+    struct stat file_status;
+    const int file_descriptor = open(file_path, O_WRONLY | O_NOFOLLOW | O_NONBLOCK);
+
+    if (file_descriptor < 0) {
+        return -1;
+    }
+
+    if (fstat(file_descriptor, &file_status) != 0 || !S_ISREG(file_status.st_mode)) {
+        close(file_descriptor);
+        errno = EINVAL;
+        return -1;
+    }
+
+    // overwritten before the name is removed, so the old bytes are not just left behind in free blocks
+    if (overwrite_with_random_bytes(file_descriptor, (unsigned long long)file_status.st_size) != 0) {
+        const int error_code = errno;
+
+        close(file_descriptor);
+        errno = error_code;
+        return -1;
+    }
+
+    if (close(file_descriptor) != 0) {
+        return -1;
+    }
+
+    return unlink(file_path);
+}
+
+static void shred_file(const char *const username, const char *const file_path) {
+    char key_path[PATH_SIZE];
+    unsigned char header[HEADER_SIZE];
+    unsigned char master_key[KEY];
+
+    const int input_file_descriptor = open_input_file(file_path, MAXIMUM_ENCRYPTED_SIZE);
+
+    const ssize_t header_length = read_full(input_file_descriptor, header, sizeof header);
+
+    close(input_file_descriptor);
+
+    if (header_length != (ssize_t)sizeof header || memcmp(header, MAGIC, LEN_OF_MAGIC) != 0) {
+        shutdown("input is not an encrypted file");
+    }
+
+    build_key_path(key_path, username, header + FILE_ID_AT);
+
+    if (access(key_path, F_OK) != 0) {
+        shutdown_with_system_error("cannot open file key");
+    }
+
+    load_master_key(username, master_key);
+    sodium_memzero(master_key, sizeof master_key);
+
+    if (overwrite_and_remove_file(key_path) != 0) {
+        shutdown_with_system_error("cannot destroy file key");
+    }
+
+    if (overwrite_and_remove_file(file_path) != 0) {
+        shutdown_with_system_error("file key destroyed, but cannot remove encrypted file");
+    }
+
+    printf("shredded %s\n", file_path);
 }
 
 int main(int argument_count, char **argument_values)
