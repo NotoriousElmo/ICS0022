@@ -1,6 +1,6 @@
 # secure_files
 
-`passphrase -> Argon2id -> KEK -> unwraps MEK -> unwraps per-file DEK -> XChaCha20-Poly1305 secretstream`
+`passphrase -> Argon2id -> KEK -> unwraps MEK -> unwraps per-file DEK -> XChaCha20-Poly1305 secretstream -> file data`
 
 ## Build
 
