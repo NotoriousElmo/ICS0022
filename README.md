@@ -1,10 +1,10 @@
 # secure_files
 
-`passphrase -> Argon2id -> KEK -> unwraps MEK -> unwraps per-file DEK -> XChaCha20-Poly1305`
+`passphrase -> Argon2id -> KEK -> unwraps MEK -> unwraps per-file DEK -> XChaCha20-Poly1305 secretstream`
 
 ## Build
 
-Needs a C compiler and libsodium WSL.
+Needs a C compiler and libsodium.
 
 ```powershell
 wsl -d Ubuntu
@@ -23,14 +23,13 @@ gcc -std=c17 -Wall -Wextra main.c -o secure_files -lsodium
 mkdir -p ~/ics0022
 cp -r /mnt/c/Users/marku/desktop/ics0022/secure_files ~/ics0022/
 cd ~/ics0022/secure_files
-chmod 700 store keys
 ```
 
 ```bash
 ./secure_files init    --user bob            # create profile
-./secure_files encrypt --user bob notes.txt  # -> notes.txt.enc
+./secure_files encrypt --user bob notes.txt  # -> notes.txt.enc, also removes the original notes.txt, so the user doesn't have to manually delete it before decrypting
 ./secure_files decrypt --user bob notes.txt.enc
-./secure_files shred   --user bob notes.txt.enc   # deletes the key and the .enc file
+./secure_files shred   --user bob notes.txt.enc   # overwrites and deletes the key and the .enc file
 ```
 
 ## State after Checkpoint 2

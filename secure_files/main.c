@@ -498,6 +498,10 @@ static void encrypt_file(const char *const username, const char *const file_path
         shutdown(error);
     }
 
+    if (unlink(file_path) != 0) {
+        shutdown_with_system_error("file encrypted, but cannot remove original file");
+    }
+
     printf("encrypted to %s\n", encrypted_path);
 }
 
