@@ -380,6 +380,7 @@ static const char *encrypt_stream(const int input_file_descriptor, const int out
 
 static int open_input_file(const char *const file_path, const unsigned long long maximum_size) {
     struct stat file_status;
+    
     if (strlen(file_path) == 0 || strlen(file_path) >= PATH_SIZE) {
         shutdown("invalid file path");
     }
@@ -389,6 +390,9 @@ static int open_input_file(const char *const file_path, const unsigned long long
     }
     if (fstat(file_descriptor, &file_status) != 0 || !S_ISREG(file_status.st_mode)) {
         shutdown("input is not a regular file");
+    }
+    if (file_status.st_uid != geteuid()) {
+        shutdown("access denied because you do not own this file");
     }
     if ((unsigned long long)file_status.st_size > maximum_size) {
         shutdown("input file is too large");
@@ -760,6 +764,18 @@ static void validate_path(const char *const path)
     }
 }
 
+static void verify_user(const char *const username) {
+    struct passwd *user_info = getpwuid(geteuid());
+
+    if (user_info == NULL) {
+        shutdown("cannot determine executing user identity");
+    }
+
+    if (strcmp(user_info->pw_name, username) != 0) {
+        shutdown("access denied due to username mismatch");
+    }
+}
+
 int main(int argument_count, char **argument_values)
 {
     static const char usage_message[] =
@@ -803,6 +819,8 @@ int main(int argument_count, char **argument_values)
     if (!is_valid_username(username)) {
         shutdown("user name must be 1-32 characters of A-Z a-z 0-9 _ -");
     }
+
+    verify_user(username);
 
     if (file_path != NULL) {
         validate_path(file_path);
