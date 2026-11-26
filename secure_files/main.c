@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pwd.h>
 #include <stdbool.h>
 #include <termios.h>
 #include <time.h>
