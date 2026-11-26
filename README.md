@@ -1,40 +1,47 @@
 # secure_files
 
-`passphrase -> Argon2id -> KEK -> unwraps MEK -> unwraps per-file DEK -> XChaCha20-Poly1305 secretstream -> file data`
+Encrypts, decrypts and shreds files for one local Linux/WSL user. Written in C17 with libsodium.
+
+**Scope:** your own files up to 1 GiB, in the folder you run the tool from. No networking, sharing or password
+recovery.
 
 ## Build
 
-Needs a C compiler and libsodium.
-
-```powershell
-wsl -d Ubuntu
-```
+Clone onto the Linux filesystem, not `/mnt/c`.
 
 ```bash
-sudo apt update
-sudo apt install build-essential libsodium-dev
-cd secure_files
+sudo apt install build-essential libsodium-dev git
+git clone https://github.com/NotoriousElmo/ICS0022.git && cd ICS0022/secure_files
 gcc -std=c17 -Wall -Wextra main.c -o secure_files -lsodium
 ```
 
 ## Use
 
 ```bash
-mkdir -p ~/ics0022
-cp -r /mnt/c/Users/marku/desktop/ics0022/secure_files ~/ics0022/
-cd ~/ics0022/secure_files
+./secure_files init    --user "$(whoami)"                # create profile (password of 12+ characters)
+./secure_files encrypt --user "$(whoami)" notes.txt      # -> notes.txt.enc, removes notes.txt
+./secure_files decrypt --user "$(whoami)" notes.txt.enc  # -> notes.txt
+./secure_files shred   --user "$(whoami)" notes.txt.enc  # destroys notes.txt.enc and its key
 ```
 
-```bash
-./secure_files init    --user bob            # create profile
-./secure_files encrypt --user bob notes.txt  # -> notes.txt.enc, also removes the original notes.txt, so the user doesn't have to manually delete it before decrypting
-./secure_files decrypt --user bob notes.txt.enc
-./secure_files shred   --user bob notes.txt.enc   # overwrites and deletes the key and the .enc file
-```
+- Paths must be relative, without `..`, and not symbolic links.
+- Keys are stored in `./.secure_files/`. If you lose it, the encrypted files are lost too.
+- Any error prints `operation failed`. The reason goes to `./secure_files.log`, which never contains secrets.
 
-## State after Checkpoint 2
+## Test
 
-- Can initialise user
-- Can encrypt file
-- Can decrypt file
-- Can shred file
+Run `bash test.sh` in a scratch copy only: it deletes `./.secure_files/`.
+
+## Why C17 and libsodium
+
+C17 gives direct control over memory and file handles. libsodium is audited, hard to misuse, and provides every
+primitive the tool needs. OpenSSL is larger and easier to misuse.
+
+## Known limitations
+
+- `encrypt` does not overwrite the original before deleting it.
+- A symlinked folder in a path is followed.
+- The log records only failures.
+- Some error exits skip wiping secrets from memory.
+
+Design: [architecture_and_data_flow.md](architecture_and_data_flow.md) · Threats: [threat_model_matrix.md](threat_model_matrix.md)

@@ -1,69 +1,64 @@
-# Architecture & Data Flow
+# Architecture and Data Flow
 
-## 1. Architecture Diagram
+One C17 program (`secure_files/main.c`) using libsodium. Each run executes one command.
 
 ```mermaid
-flowchart TD
-    subgraph Untrusted_Input [Untrusted Boundary: User Input]
-        CLI[CLI Arguments & Paths]
-        PWD[Password Prompt]
+flowchart LR
+    subgraph IN["Untrusted: input"]
+        ARGS["arguments"]
+        PW["password (no echo)"]
     end
-
-    subgraph Trusted_Memory [Trusted Boundary: Application RAM]
-        InputVal[Input Validator]
-        Auth[Auth: Argon2id]
-        MemLock[Secrecy: Zeroized Memory]
-        Crypto[Crypto: XChaCha20-Poly1305]
-        FileIO[File I/O Manager]
-        
-        CLI --> InputVal
-        PWD --> Auth
-        InputVal --> FileIO
-        Auth -- KEK --> Crypto
-        Crypto -- Decrypts MEK --> MemLock
-        MemLock -- MEK --> Crypto
+    subgraph MEM["Trusted: process memory"]
+        VAL["validator"]
+        KDF["Argon2id"]
+        KEYS["key wrap<br/>XChaCha20-Poly1305"]
+        STREAM["secretstream"]
     end
-
-    subgraph Untrusted_Storage [Untrusted Boundary: Local Disk]
-        MetaDB[(users.json)]
-        EncFile[Encrypted Target Files]
+    subgraph DISK["Untrusted: disk (working folder)"]
+        STORE[".secure_files/<br/>profile + key files"]
+        DATA["FILE / FILE.enc"]
+        LOGF["secure_files.log"]
     end
-
-    Crypto <--> MetaDB
-    FileIO <--> EncFile
-    Crypto --> |Encrypts/Decrypts Chunks| FileIO
+    ARGS --> VAL --> STREAM
+    PW --> KDF -- "KEK" --> KEYS
+    KEYS <--> STORE
+    KEYS -- "file key" --> STREAM
+    STREAM <--> DATA
+    VAL -.-> LOGF
 ```
 
-## 2. Trust Boundaries
-* **Trusted (Application RAM):** Plaintext passwords and Master Encryption Key (MEK) exist here. Protected by Rust's ownership model and active memory zeroization (`secrecy` crate).
-* **Untrusted (Local Disk):** Hostile environment. All stored data (`users.json`, files) requires Authenticated Encryption (Poly1305) to detect tampering.
-* **Untrusted (User Input):** Hostile environment. CLI args and paths undergo strict canonicalization to prevent injection and traversal.
+## Keys
 
-## 3. Core Components
-* **Input Validator:** Enforces strict allowlists; resolves absolute canonical paths; rejects out-of-bound symlinks.
-* **Auth Module:** Handles secure password prompting (no echo); derives Key Encryption Key (KEK) via Argon2id.
-* **Crypto Engine:** Generates random Nonces and unique Data Encryption Keys (DEKs) via CSPRNG; performs AEAD encryption/decryption.
-* **File I/O Manager:** Streams file reads/writes in fixed 4MB chunks to prevent memory exhaustion (DoS).
+`password → Argon2id → KEK → unwraps master key (USER.profile) → unwraps file key (USER.keys/ID.key) → decrypts FILE.enc`
 
-## 4. Disk Layout
-**User Metadata (`~/.sfe/users.json`)**
-```json
-{
-  "username": "alice",
-  "salt": "<Base64 128-bit Salt>",
-  "argon2_params": "m=65536,t=3,p=4",
-  "mek_nonce": "<Base64 192-bit Nonce>",
-  "encrypted_mek": "<Base64 Ciphertext + Poly1305 Tag>"
-}
-```
+- Every file has its own random key. Deleting its key file makes the `.enc` file impossible to decrypt.
+- All keys are held in locked memory and wiped after use. Core dumps are disabled.
 
-**Encrypted Target File**
-* **Bytes 0-24:** 192-bit XChaCha20 Nonce.
-* **Bytes 24-56:** Unique DEK (encrypted by MEK).
-* **Bytes 56-72:** 128-bit Poly1305 Tag.
-* **Bytes 72+:** Encrypted file chunks.
+## On disk
 
-## 5. Data Flows
-* **Auth:** Password + Salt $\rightarrow$ Argon2id $\rightarrow$ KEK $\rightarrow$ Decrypt MEK $\rightarrow$ Zeroize KEK $\rightarrow$ Store MEK in secure RAM.
-* **Encryption:** Canonicalize path $\rightarrow$ Generate DEK/Nonce $\rightarrow$ Encrypt DEK with MEK $\rightarrow$ Stream/Encrypt file chunks $\rightarrow$ Write header + ciphertext $\rightarrow$ Unlink plaintext file.
-* **Secure Deletion:** Truncate first 72 bytes of target file (destroys DEK) $\rightarrow$ Ciphertext becomes permanent noise (Crypto-shredding) $\rightarrow$ Standard OS delete.
+All of these live in `./.secure_files/`: folders `0700`, files `0600`.
+
+| File | Bytes | Contents |
+|---|---|---|
+| `USER.profile` | 88 | salt, nonce, wrapped master key, tag |
+| `USER.keys/ID.key` | 72 | nonce, wrapped file key, tag |
+| `FILE.enc` | 44 + data | `SF01`, file ID, stream header, then 64 KiB chunks with a tag each |
+
+## Trust boundaries
+
+- **Input:** the user name must equal your login. Paths must be relative, without `..`.
+- **Disk:** all secret data is authenticated, files are checked on the open handle, and existing outputs are never
+  overwritten.
+- **Other users:** private folders and files, and you must own the input file.
+- **Memory:** locked buffers, wiped after use.
+
+## Flows
+
+- **init:** password → Argon2id → wrap a new master key → write the profile.
+- **encrypt:** password → new file key → write the key file → write `FILE.enc` → delete `FILE`.
+- **decrypt:** password → unwrap the file key → write `FILE`, checking each chunk.
+- **shred:** password → overwrite and delete the key file and `FILE.enc`.
+
+## Libraries
+
+libsodium 1.0.18 only: audited and hard to misuse. OpenSSL was not used because it is larger and easier to misuse.
