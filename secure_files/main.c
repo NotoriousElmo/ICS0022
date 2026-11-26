@@ -86,7 +86,6 @@ static int wrap_key(unsigned char output_buffer[WRAPPED],
         NULL, output_buffer, wrapping_key);
 }
 
-__attribute__((unused))
 static int unwrap_key(unsigned char plaintext_key[KEY],
                       const unsigned char wrapped_key[WRAPPED],
                       const unsigned char wrapping_key[KEY],
@@ -297,12 +296,16 @@ static void initialise_profile(const char *const username)
     read_password("Enter password: ", password, sizeof password);
     read_password("Repeat password: ", repeated_password, sizeof repeated_password);
 
-    if (strcmp(password, repeated_password) != 0) {
+    const bool passwords_match = strcmp(password, repeated_password) == 0;
+    sodium_munlock(repeated_password, sizeof repeated_password);
+
+    if (!passwords_match) {
         shutdown("passwords don't match");
     }
 
-    if (strlen(password) < 12) {
-        shutdown("password is too short (min 12 chars)");
+    if (!passwords_match || strlen(password) < 12) {
+        sodium_munlock(password, sizeof password);
+        shutdown(passwords_match ? "password is too short (min 12 chars)" : "passwords don't match");
     }
 
     // profile layout: [salt | nonce | wrapped master key | tag]
@@ -310,9 +313,14 @@ static void initialise_profile(const char *const username)
     randombytes_buf(master_key, KEY);
 
     derive_key_encryption_key(key_encryption_key, password, profile);
+    sodium_munlock(password, sizeof password);
 
     // salt is bound as additional data so it cannot be swapped undetected
-    if (wrap_key(profile + SALT, master_key, key_encryption_key, profile, SALT) != 0) {
+    const int wrap_code = wrap_key(profile + SALT, master_key, key_encryption_key, profile, SALT);
+    sodium_munlock(key_encryption_key, sizeof key_encryption_key);
+    sodium_munlock(master_key, sizeof master_key);
+
+    if (wrap_code != 0) {
         shutdown("couldn't wrap the master key");
     }
 
@@ -466,6 +474,55 @@ static void load_master_key(const char *const username, unsigned char master_key
     }
 }
 
+static int overwrite_with_random_bytes(const int file_descriptor, const unsigned long long file_length) {
+    unsigned char noise[CHUNK_SIZE];
+    unsigned long long remaining_length = file_length;
+
+    while (remaining_length > 0) {
+        const size_t chunk_length = remaining_length < sizeof noise ? (size_t)remaining_length : sizeof noise;
+
+        randombytes_buf(noise, chunk_length);
+
+        if (write_all(file_descriptor, noise, chunk_length) != 0) {
+            return -1;
+        }
+
+        remaining_length -= chunk_length;
+    }
+
+    return fsync(file_descriptor);
+}
+
+static int overwrite_and_remove_file(const char *const file_path){
+    struct stat file_status;
+    const int file_descriptor = open(file_path, O_WRONLY | O_NOFOLLOW | O_NONBLOCK);
+
+    if (file_descriptor < 0) {
+        return -1;
+    }
+
+    if (fstat(file_descriptor, &file_status) != 0 || !S_ISREG(file_status.st_mode)) {
+        close(file_descriptor);
+        errno = EINVAL;
+        return -1;
+    }
+
+    // overwritten before the name is removed, so the old bytes are not just left behind in free blocks
+    if (overwrite_with_random_bytes(file_descriptor, (unsigned long long)file_status.st_size) != 0) {
+        const int error_code = errno;
+
+        close(file_descriptor);
+        errno = error_code;
+        return -1;
+    }
+
+    if (close(file_descriptor) != 0) {
+        return -1;
+    }
+
+    return unlink(file_path);
+}
+
 static void encrypt_file(const char *const username, const char *const file_path)
 {
     char encrypted_path[PATH_SIZE];
@@ -486,10 +543,10 @@ static void encrypt_file(const char *const username, const char *const file_path
 
     memcpy(header, MAGIC, LEN_OF_MAGIC);
     randombytes_buf(header + FILE_ID_AT, FILE_ID_SIZE);
-    randombytes_buf(file_key, KEY);
     build_key_path(key_path, username, header + FILE_ID_AT);
 
     load_master_key(username, master_key);
+    randombytes_buf(file_key, KEY);
 
     const int init_code = crypto_secretstream_xchacha20poly1305_init_push(&state, header + STREAM_AT, file_key);
     const int wrap_code = wrap_key(wrapped_key, file_key, master_key, header, STREAM_AT);
@@ -537,7 +594,7 @@ static void encrypt_file(const char *const username, const char *const file_path
         shutdown(error);
     }
 
-    if (unlink(file_path) != 0) {
+    if (overwrite_and_remove_file(file_path) != 0) {
         shutdown_with_system_error("file encrypted, but cannot remove original file");
     }
 
@@ -685,55 +742,6 @@ static void decrypt_file(const char *const username, const char *const file_path
     printf("decrypted to %s\n", decrypted_path);
 }
 
-static int overwrite_with_random_bytes(const int file_descriptor, const unsigned long long file_length) {
-    unsigned char noise[CHUNK_SIZE];
-    unsigned long long remaining_length = file_length;
-
-    while (remaining_length > 0) {
-        const size_t chunk_length = remaining_length < sizeof noise ? (size_t)remaining_length : sizeof noise;
-
-        randombytes_buf(noise, chunk_length);
-
-        if (write_all(file_descriptor, noise, chunk_length) != 0) {
-            return -1;
-        }
-
-        remaining_length -= chunk_length;
-    }
-
-    return fsync(file_descriptor);
-}
-
-static int overwrite_and_remove_file(const char *const file_path){
-    struct stat file_status;
-    const int file_descriptor = open(file_path, O_WRONLY | O_NOFOLLOW | O_NONBLOCK);
-
-    if (file_descriptor < 0) {
-        return -1;
-    }
-
-    if (fstat(file_descriptor, &file_status) != 0 || !S_ISREG(file_status.st_mode)) {
-        close(file_descriptor);
-        errno = EINVAL;
-        return -1;
-    }
-
-    // overwritten before the name is removed, so the old bytes are not just left behind in free blocks
-    if (overwrite_with_random_bytes(file_descriptor, (unsigned long long)file_status.st_size) != 0) {
-        const int error_code = errno;
-
-        close(file_descriptor);
-        errno = error_code;
-        return -1;
-    }
-
-    if (close(file_descriptor) != 0) {
-        return -1;
-    }
-
-    return unlink(file_path);
-}
-
 static void shred_file(const char *const username, const char *const file_path) {
     char key_path[PATH_SIZE];
     unsigned char header[HEADER_SIZE];
@@ -804,6 +812,8 @@ int main(int argument_count, char **argument_values)
     if (sodium_init() < 0) {
         shutdown("libsodium failed to initialise");
     }
+
+    setvbuf(stdin, NULL, _IONBF, 0);
 
     if (setrlimit(RLIMIT_CORE, &no_core_dumps) != 0) {
         shutdown_with_system_error("cannot disable core dumps");
