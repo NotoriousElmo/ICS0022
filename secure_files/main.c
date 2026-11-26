@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #define KEY crypto_aead_xchacha20poly1305_ietf_KEYBYTES
@@ -36,15 +37,37 @@
 #define CHUNK_SIZE 65536
 #define MAXIMUM_ENCRYPTED_SIZE (MAXIMUM_FILE_SIZE + HEADER_SIZE + STREAM_TAG * (MAXIMUM_FILE_SIZE / CHUNK_SIZE + 1))  // largest file encrypt can produce
 
+#define LOG_FILE_PATH "secure_files.log"
+
+static void log_event(const char *const level, const char *const message, const char *const details)
+{
+    FILE *log_file = fopen(LOG_FILE_PATH, "a");
+    if (log_file != NULL) {
+        time_t now = time(NULL);
+        struct tm *t = localtime(&now);
+        char time_buf[64];
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", t);
+
+        if (details != NULL) {
+            fprintf(log_file, "[%s] [%s] %s: %s\n", time_buf, level, message, details);
+        } else {
+            fprintf(log_file, "[%s] [%s] %s\n", time_buf, level, message);
+        }
+        fclose(log_file);
+    }
+}
+
 static _Noreturn void shutdown(const char *const msg)
 {
-    fprintf(stderr, "secure_files: %s\n", msg);
+    log_event("ERROR", msg, NULL);
+    fprintf(stderr, "secure_files: operation failed\n");
     exit(EXIT_FAILURE);
 }
 
 static _Noreturn void shutdown_with_system_error(const char *const msg)
 {
-    fprintf(stderr, "secure_files: %s; with error: %s\n", msg, strerror(errno));
+    log_event("FATAL", msg, strerror(errno));
+    fprintf(stderr, "secure_files: operation failed\n");
     exit(EXIT_FAILURE);
 }
 
