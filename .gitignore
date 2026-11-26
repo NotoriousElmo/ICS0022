@@ -135,3 +135,6 @@ Desktop.ini
 .env
 *.pem
 *.key
+
+secure_files/secure_files
+.secure_files/
