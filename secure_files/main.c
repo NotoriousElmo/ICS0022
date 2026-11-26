@@ -750,6 +750,16 @@ static void shred_file(const char *const username, const char *const file_path) 
     printf("shredded %s\n", file_path);
 }
 
+static void validate_path(const char *const path)
+{
+    if (strstr(path, "..") != NULL) {
+        shutdown("path contains forbidden parent references");
+    }
+    if (path[0] == '/') {
+        shutdown("absolute paths are forbidden");
+    }
+}
+
 int main(int argument_count, char **argument_values)
 {
     static const char usage_message[] =
@@ -792,6 +802,10 @@ int main(int argument_count, char **argument_values)
 
     if (!is_valid_username(username)) {
         shutdown("user name must be 1-32 characters of A-Z a-z 0-9 _ -");
+    }
+
+    if (file_path != NULL) {
+        validate_path(file_path);
     }
 
     if (strcmp(command_name, "init") == 0 && file_path == NULL) {
