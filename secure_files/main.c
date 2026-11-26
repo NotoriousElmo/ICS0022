@@ -280,6 +280,11 @@ static void initialise_profile(const char *const username)
     unsigned char master_key[KEY];
     unsigned char key_encryption_key[KEY];
 
+    sodium_mlock(password, sizeof password);
+    sodium_mlock(repeated_password, sizeof repeated_password);
+    sodium_mlock(master_key, sizeof master_key);
+    sodium_mlock(key_encryption_key, sizeof key_encryption_key);
+
     create_priv_dir(store_directory());
 
     build_keys_dir_path(keys_dir_path, username);
@@ -314,10 +319,10 @@ static void initialise_profile(const char *const username)
         shutdown_with_system_error("cannot create profile");
     }
 
-    sodium_memzero(password, sizeof password);
-    sodium_memzero(repeated_password, sizeof repeated_password);
-    sodium_memzero(key_encryption_key, sizeof key_encryption_key);
-    sodium_memzero(master_key, sizeof master_key);
+    sodium_munlock(password, sizeof password);
+    sodium_munlock(repeated_password, sizeof repeated_password);
+    sodium_munlock(key_encryption_key, sizeof key_encryption_key);
+    sodium_munlock(master_key, sizeof master_key);
 
     printf("initialised profile\n");
 }
@@ -429,6 +434,9 @@ static void load_master_key(const char *const username, unsigned char master_key
     unsigned char profile[PROFILE_SIZE];
     unsigned char key_encryption_key[KEY];
 
+    sodium_mlock(password, sizeof password);
+    sodium_mlock(key_encryption_key, sizeof key_encryption_key);
+
     build_profile_path(profile_path, username);
 
     const int profile_file_descriptor = open(profile_path, O_RDONLY | O_NOFOLLOW);
@@ -447,10 +455,10 @@ static void load_master_key(const char *const username, unsigned char master_key
 
     read_password("Enter password: ", password, sizeof password);
     derive_key_encryption_key(key_encryption_key, password, profile);
-    sodium_memzero(password, sizeof password);
+    sodium_munlock(password, sizeof password);
 
     const int return_code = unwrap_key(master_key, profile + SALT, key_encryption_key, profile, SALT);
-    sodium_memzero(key_encryption_key, sizeof key_encryption_key);
+    sodium_munlock(key_encryption_key, sizeof key_encryption_key);
 
     if (return_code != 0) {
         shutdown("wrong password or corrupted profile");
@@ -467,6 +475,9 @@ static void encrypt_file(const char *const username, const char *const file_path
     unsigned char wrapped_key[WRAPPED];
     crypto_secretstream_xchacha20poly1305_state state;
 
+    sodium_mlock(master_key, sizeof master_key);
+    sodium_mlock(file_key, sizeof file_key);
+
     build_the_encrypted_path(encrypted_path, file_path);
     require_file_missing(encrypted_path, "output file already exists");
 
@@ -482,8 +493,8 @@ static void encrypt_file(const char *const username, const char *const file_path
     const int init_code = crypto_secretstream_xchacha20poly1305_init_push(&state, header + STREAM_AT, file_key);
     const int wrap_code = wrap_key(wrapped_key, file_key, master_key, header, STREAM_AT);
 
-    sodium_memzero(master_key, sizeof master_key);
-    sodium_memzero(file_key, sizeof file_key);
+    sodium_munlock(master_key, sizeof master_key);
+    sodium_munlock(file_key, sizeof file_key);
 
     if (init_code != 0 || wrap_code != 0) {
         sodium_memzero(&state, sizeof state);
@@ -612,6 +623,9 @@ static void decrypt_file(const char *const username, const char *const file_path
     unsigned char wrapped_key[WRAPPED];
     crypto_secretstream_xchacha20poly1305_state state;
 
+    sodium_mlock(master_key, sizeof master_key);
+    sodium_mlock(file_key, sizeof file_key);
+
     build_decrypted_file_path(decrypted_path, file_path);
 
     require_file_missing(decrypted_path, "decrypted file already exists");
@@ -630,14 +644,14 @@ static void decrypt_file(const char *const username, const char *const file_path
 
     const int unwrap_code = unwrap_key(file_key, wrapped_key, master_key, header, STREAM_AT);    // a key file belonging to another file is rejected
 
-    sodium_memzero(master_key, sizeof master_key);
+    sodium_munlock(master_key, sizeof master_key);
 
     if (unwrap_code != 0) {
         shutdown("cannot unwrap file key, key file or header is corrupted");
     }
     const int init_code = crypto_secretstream_xchacha20poly1305_init_pull(&state, header + STREAM_AT, file_key);
 
-    sodium_memzero(file_key, sizeof file_key);
+    sodium_munlock(file_key, sizeof file_key);
 
     if (init_code != 0) {
         sodium_memzero(&state, sizeof state);
@@ -724,6 +738,8 @@ static void shred_file(const char *const username, const char *const file_path) 
     unsigned char header[HEADER_SIZE];
     unsigned char master_key[KEY];
 
+    sodium_mlock(master_key, sizeof master_key);
+
     const int input_file_descriptor = open_input_file(file_path, MAXIMUM_ENCRYPTED_SIZE);
 
     const ssize_t header_length = read_full(input_file_descriptor, header, sizeof header);
@@ -741,7 +757,7 @@ static void shred_file(const char *const username, const char *const file_path) 
     }
 
     load_master_key(username, master_key);
-    sodium_memzero(master_key, sizeof master_key);
+    sodium_munlock(master_key, sizeof master_key);
 
     if (overwrite_and_remove_file(key_path) != 0) {
         shutdown_with_system_error("cannot destroy file key");
