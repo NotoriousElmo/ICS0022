@@ -36,7 +36,7 @@ Paths must be relative and without `..` parent references. Symbolic links are re
 ## Test
 
 ```bash
-bash tests/run_tests.sh
+./test.sh
 
 ```
 
