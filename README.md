@@ -37,11 +37,12 @@ The tool creates `.secure_files/` and `secure_files.log` in the current folder.
 
 ```
 
-Paths must be relative and without `..` parent references. Symbolic links are rejected. Keys are stored in `./.secure_files/`. The encrypted files are lost if you lose the key directory. Any error prints `operation failed`. The reason goes to `./secure_files.log`. The log never contains secrets.
+Paths must be relative and without `..` parent references. Symbolic links are rejected. `encrypt` replaces the original: it overwrites the plaintext and removes it, so no unencrypted copy is left behind. `decrypt` keeps the `.enc` file. `shred` securely deletes a stored file, so it only accepts `NAME.enc` files: it destroys the file's key, then overwrites and removes the `.enc` file. Keys are stored in `./.secure_files/`. Because the original is removed, losing the key directory means losing the files. Any error prints `operation failed`. The reason goes to `./secure_files.log`. The log never contains secrets.
 
 ## Test
 
 ```bash
+chmod +x test.sh
 ./test.sh
 
 ```
