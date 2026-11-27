@@ -77,6 +77,14 @@ static _Noreturn void shutdown_with_system_error(const char *const msg)
     exit(EXIT_FAILURE);
 }
 
+// called before a secret is put into the buffer, so stopping here leaves nothing behind
+static void lock_or_fail(void *const buffer, const size_t buffer_size)
+{
+    if (sodium_mlock(buffer, buffer_size) != 0) {
+        shutdown_with_system_error("cannot lock memory, so secrets could be swapped to disk");
+    }
+}
+
 static int wrap_key(unsigned char output_buffer[WRAPPED],
                     const unsigned char plaintext_key[KEY],
                     const unsigned char wrapping_key[KEY],
@@ -286,10 +294,10 @@ static void initialise_profile(const char *const username)
     unsigned char master_key[KEY];
     unsigned char key_encryption_key[KEY];
 
-    sodium_mlock(password, sizeof password);
-    sodium_mlock(repeated_password, sizeof repeated_password);
-    sodium_mlock(master_key, sizeof master_key);
-    sodium_mlock(key_encryption_key, sizeof key_encryption_key);
+    lock_or_fail(password, sizeof password);
+    lock_or_fail(repeated_password, sizeof repeated_password);
+    lock_or_fail(master_key, sizeof master_key);
+    lock_or_fail(key_encryption_key, sizeof key_encryption_key);
 
     create_priv_dir(store_directory());
 
@@ -370,7 +378,10 @@ static const char *encrypt_stream(const int input_file_descriptor, const int out
     const char *error = NULL;
     bool is_last = false;
 
-    sodium_mlock(plain, sizeof plain);
+    // the key and output files already exist here, so return the error and let the caller remove them
+    if (sodium_mlock(plain, sizeof plain) != 0) {
+        return "cannot lock memory, so plaintext could be swapped to disk";
+    }
 
     while (!is_last && error == NULL) {
         const ssize_t plain_len = read_full(input_file_descriptor, plain, sizeof plain);
@@ -381,13 +392,16 @@ static const char *encrypt_stream(const int input_file_descriptor, const int out
         }
         is_last = (size_t)plain_len < sizeof plain;
 
-        if (crypto_secretstream_xchacha20poly1305_push(state, cipher, &cipher_len, plain, (unsigned long long)plain_len, NULL, 0, is_last ? STREAM_FINAL : 0) != 0) {
+        // the read position is the number of bytes read so far, so a file that grew past the limit is caught
+        if (lseek(input_file_descriptor, 0, SEEK_CUR) > (off_t)MAXIMUM_FILE_SIZE) {
+            error = "input file grew past the size limit";
+        } else if (crypto_secretstream_xchacha20poly1305_push(state, cipher, &cipher_len, plain, (unsigned long long)plain_len, NULL, 0, is_last ? STREAM_FINAL : 0) != 0) {
             error = "encryption failed";
         } else if (write_all(output_file_descriptor, cipher, (size_t)cipher_len) != 0) {
             error = "write failed";
         }
     }
-    sodium_memzero(plain, sizeof plain);
+    sodium_munlock(plain, sizeof plain);
     return error;
 }
 
@@ -411,6 +425,37 @@ static int open_input_file(const char *const file_path, const unsigned long long
         shutdown("input file is too large");
     }
     return file_descriptor;
+}
+
+static void require_owner_writable(const int file_descriptor)
+{
+    struct stat file_status;
+
+    if (fstat(file_descriptor, &file_status) != 0) {
+        shutdown_with_system_error("cannot inspect input file");
+    }
+
+    // the original is overwritten last, so a file that cannot be overwritten must fail before any key or output file exists
+    // only the owner bit counts here because open_input_file has already checked that you own the file
+    if ((file_status.st_mode & S_IWUSR) == 0) {
+        shutdown("input file is read-only, so the original cannot be overwritten");
+    }
+
+    // overwriting changes the data behind every name, so a hard link to the profile or a key file would destroy it
+    if (file_status.st_nlink != 1) {
+        shutdown("input file has other hard links, so overwriting it would change them too");
+    }
+
+    struct stat program_status;
+
+    // the program's own binary would be overwritten and removed, so compare the file itself rather than its name
+    if (stat("/proc/self/exe", &program_status) != 0) {
+        shutdown_with_system_error("cannot inspect the program file");
+    }
+
+    if (program_status.st_dev == file_status.st_dev && program_status.st_ino == file_status.st_ino) {
+        shutdown("input file is the program itself");
+    }
 }
 
 static void build_the_encrypted_path(char *const encrypted_path, const char *const file_path) {
@@ -442,8 +487,8 @@ static void load_master_key(const char *const username, unsigned char master_key
     unsigned char profile[PROFILE_SIZE];
     unsigned char key_encryption_key[KEY];
 
-    sodium_mlock(password, sizeof password);
-    sodium_mlock(key_encryption_key, sizeof key_encryption_key);
+    lock_or_fail(password, sizeof password);
+    lock_or_fail(key_encryption_key, sizeof key_encryption_key);
 
     build_profile_path(profile_path, username);
 
@@ -493,6 +538,16 @@ static int overwrite_with_random_bytes(const int file_descriptor, const unsigned
     return fsync(file_descriptor);
 }
 
+static void wipe_open_file(const int file_descriptor)
+{
+    struct stat file_status;
+
+    // best effort: the caller removes the file whether or not this works
+    if (fstat(file_descriptor, &file_status) == 0 && lseek(file_descriptor, 0, SEEK_SET) == 0) {
+        overwrite_with_random_bytes(file_descriptor, (unsigned long long)file_status.st_size);
+    }
+}
+
 static int overwrite_and_remove_file(const char *const file_path){
     struct stat file_status;
     const int file_descriptor = open(file_path, O_WRONLY | O_NOFOLLOW | O_NONBLOCK);
@@ -533,14 +588,16 @@ static void encrypt_file(const char *const username, const char *const file_path
     unsigned char wrapped_key[WRAPPED];
     crypto_secretstream_xchacha20poly1305_state state;
 
-    sodium_mlock(master_key, sizeof master_key);
-    sodium_mlock(file_key, sizeof file_key);
-    sodium_mlock(&state, sizeof state);
+    lock_or_fail(master_key, sizeof master_key);
+    lock_or_fail(file_key, sizeof file_key);
+    lock_or_fail(&state, sizeof state);
 
     build_the_encrypted_path(encrypted_path, file_path);
     require_file_missing(encrypted_path, "output file already exists");
 
     const int input_file_descriptor = open_input_file(file_path, MAXIMUM_FILE_SIZE);
+
+    require_owner_writable(input_file_descriptor);
 
     memcpy(header, MAGIC, LEN_OF_MAGIC);
     randombytes_buf(header + FILE_ID_AT, FILE_ID_SIZE);
@@ -628,7 +685,10 @@ static const char *decrypt_stream(const int input_file_descriptor, const int out
     const char *error = NULL;
     bool is_last = false;
 
-    sodium_mlock(plain, sizeof plain);
+    // the key and output files already exist here, so return the error and let the caller remove them
+    if (sodium_mlock(plain, sizeof plain) != 0) {
+        return "cannot lock memory, so plaintext could be swapped to disk";
+    }
 
     while (!is_last && error == NULL) {
         const ssize_t cipher_len = read_full(input_file_descriptor, cipher, sizeof cipher);
@@ -651,7 +711,7 @@ static const char *decrypt_stream(const int input_file_descriptor, const int out
             error = "write failed";
         }
     }
-    sodium_memzero(plain, sizeof plain);
+    sodium_munlock(plain, sizeof plain);
 
     return error;
 }
@@ -684,9 +744,9 @@ static void decrypt_file(const char *const username, const char *const file_path
     unsigned char wrapped_key[WRAPPED];
     crypto_secretstream_xchacha20poly1305_state state;
 
-    sodium_mlock(master_key, sizeof master_key);
-    sodium_mlock(file_key, sizeof file_key);
-    sodium_mlock(&state, sizeof state);
+    lock_or_fail(master_key, sizeof master_key);
+    lock_or_fail(file_key, sizeof file_key);
+    lock_or_fail(&state, sizeof state);
 
     build_decrypted_file_path(decrypted_path, file_path);
 
@@ -733,6 +793,12 @@ static void decrypt_file(const char *const username, const char *const file_path
     if (error == NULL && fsync(output_file_descriptor) != 0) {
         error = "write failed";
     }
+
+    // chunks before a bad one were authentic and are already written, so that plaintext is overwritten before removal
+    if (error != NULL) {
+        wipe_open_file(output_file_descriptor);
+    }
+
     if (close(output_file_descriptor) != 0 && error == NULL) {
         error = "write failed";
     }
@@ -751,7 +817,7 @@ static void shred_file(const char *const username, const char *const file_path) 
     unsigned char header[HEADER_SIZE];
     unsigned char master_key[KEY];
 
-    sodium_mlock(master_key, sizeof master_key);
+    lock_or_fail(master_key, sizeof master_key);
 
     const int input_file_descriptor = open_input_file(file_path, MAXIMUM_ENCRYPTED_SIZE);
 
@@ -812,6 +878,28 @@ static void validate_path(const char *const path) {
     if (strncmp(parent_dir, working_dir, working_dir_len) != 0
         || (parent_dir[working_dir_len] != '\0' && parent_dir[working_dir_len] != '/')) {
         shutdown("path leaves the working directory");
+    }
+
+    // the key store and the log belong to the tool, so encrypting them would destroy the profile, a file key or the log
+    // parent_dir is resolved, so a symlinked folder that leads back into the store is caught as well
+    char store_dir[PATH_MAX];
+    const int store_dir_len = snprintf(store_dir, sizeof store_dir, "%s/.secure_files", working_dir);
+
+    if (store_dir_len < 0 || (size_t)store_dir_len >= sizeof store_dir) {
+        shutdown("project directory path is too long");
+    }
+
+    if (strncmp(parent_dir, store_dir, (size_t)store_dir_len) == 0
+        && (parent_dir[store_dir_len] == '\0' || parent_dir[store_dir_len] == '/')) {
+        shutdown("path points into the key store");
+    }
+
+    char name_copy[PATH_SIZE];
+
+    snprintf(name_copy, sizeof name_copy, "%s", path);
+
+    if (strcmp(parent_dir, working_dir) == 0 && strcmp(basename(name_copy), LOG_FILE_PATH) == 0) {
+        shutdown("path points to the log file");
     }
 }
 
