@@ -220,6 +220,7 @@ static void derive_key_encryption_key(unsigned char *const key_encryption_key,
         salt,
         crypto_pwhash_OPSLIMIT_MODERATE, crypto_pwhash_MEMLIMIT_MODERATE,
         crypto_pwhash_ALG_ARGON2ID13);
+    sodium_stackzero(16384);  // wipe KEK leftovers that Argon2id leaves on the stack
 
     if (return_code != 0) {
         shutdown("key derivation failed");
@@ -304,10 +305,6 @@ static void initialise_profile(const char *const username)
     const bool passwords_match = strcmp(password, repeated_password) == 0;
     sodium_munlock(repeated_password, sizeof repeated_password);
 
-    if (!passwords_match) {
-        shutdown("passwords don't match");
-    }
-
     if (!passwords_match || strlen(password) < 12) {
         sodium_munlock(password, sizeof password);
         shutdown(passwords_match ? "password is too short (min 12 chars)" : "passwords don't match");
@@ -332,11 +329,6 @@ static void initialise_profile(const char *const username)
     if (write_new_file(profile_file_path, profile, sizeof profile) != 0) {
         shutdown_with_system_error("cannot create profile");
     }
-
-    sodium_munlock(password, sizeof password);
-    sodium_munlock(repeated_password, sizeof repeated_password);
-    sodium_munlock(key_encryption_key, sizeof key_encryption_key);
-    sodium_munlock(master_key, sizeof master_key);
 
     printf("initialised profile\n");
 }
@@ -377,6 +369,8 @@ static const char *encrypt_stream(const int input_file_descriptor, const int out
     unsigned long long cipher_len;
     const char *error = NULL;
     bool is_last = false;
+
+    sodium_mlock(plain, sizeof plain);
 
     while (!is_last && error == NULL) {
         const ssize_t plain_len = read_full(input_file_descriptor, plain, sizeof plain);
@@ -541,6 +535,7 @@ static void encrypt_file(const char *const username, const char *const file_path
 
     sodium_mlock(master_key, sizeof master_key);
     sodium_mlock(file_key, sizeof file_key);
+    sodium_mlock(&state, sizeof state);
 
     build_the_encrypted_path(encrypted_path, file_path);
     require_file_missing(encrypted_path, "output file already exists");
@@ -633,6 +628,8 @@ static const char *decrypt_stream(const int input_file_descriptor, const int out
     const char *error = NULL;
     bool is_last = false;
 
+    sodium_mlock(plain, sizeof plain);
+
     while (!is_last && error == NULL) {
         const ssize_t cipher_len = read_full(input_file_descriptor, cipher, sizeof cipher);
 
@@ -689,6 +686,7 @@ static void decrypt_file(const char *const username, const char *const file_path
 
     sodium_mlock(master_key, sizeof master_key);
     sodium_mlock(file_key, sizeof file_key);
+    sodium_mlock(&state, sizeof state);
 
     build_decrypted_file_path(decrypted_path, file_path);
 
