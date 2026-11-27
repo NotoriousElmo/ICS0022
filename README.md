@@ -19,6 +19,12 @@ gcc -std=c17 -Wall -Wextra main.c -o secure_files -lsodium
 
 ```
 
+Remove windows line endings
+
+```bash
+sed -i 's/\r$//' test.sh
+```
+
 ## Use
 
 The tool creates `.secure_files/` and `secure_files.log` in the current folder.
