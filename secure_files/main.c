@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700  // needed for realpath()
 
 #include <sodium.h>
 #include <stdint.h>
@@ -13,6 +13,8 @@
 #include <stdbool.h>
 #include <termios.h>
 #include <time.h>
+#include <libgen.h>
+#include <limits.h>
 #include <unistd.h>
 
 #define KEY crypto_aead_xchacha20poly1305_ietf_KEYBYTES
@@ -40,20 +42,23 @@
 
 #define LOG_FILE_PATH "secure_files.log"
 
+static const char *log_user = "-";
+static const char *log_command = "-";
+
 static void log_event(const char *const level, const char *const message, const char *const details)
 {
-    FILE *log_file = fopen(LOG_FILE_PATH, "a");
+    const int log_file_descriptor = open(LOG_FILE_PATH, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    FILE *log_file = log_file_descriptor >= 0 ? fdopen(log_file_descriptor, "a") : NULL;
     if (log_file != NULL) {
         time_t now = time(NULL);
-        struct tm *t = localtime(&now);
-        char time_buf[64];
-        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", t);
+        struct tm *parsed_time = gmtime(&now);
+        char formatted_time_string[64];
+        strftime(formatted_time_string, sizeof(formatted_time_string), "%Y-%m-%dT%H:%M:%SZ", parsed_time);
+        const char *const outcome = strcmp(level, "INFO") == 0 ? "success" : "failure";
 
-        if (details != NULL) {
-            fprintf(log_file, "[%s] [%s] %s: %s\n", time_buf, level, message, details);
-        } else {
-            fprintf(log_file, "[%s] [%s] %s\n", time_buf, level, message);
-        }
+        fprintf(log_file, "ts=%s level=%s pid=%d source=local user=%s event=%s outcome=%s reason=\"%s%s%s\"\n",
+                formatted_time_string, level, (int)getpid(), log_user, log_command, outcome,
+                message, details != NULL ? ": " : "", details != NULL ? details : "");
         fclose(log_file);
     }
 }
@@ -472,6 +477,7 @@ static void load_master_key(const char *const username, unsigned char master_key
     if (return_code != 0) {
         shutdown("wrong password or corrupted profile");
     }
+    log_event("INFO", "password accepted", NULL);
 }
 
 static int overwrite_with_random_bytes(const int file_descriptor, const unsigned long long file_length) {
@@ -779,13 +785,35 @@ static void shred_file(const char *const username, const char *const file_path) 
     printf("shredded %s\n", file_path);
 }
 
-static void validate_path(const char *const path)
-{
+static void validate_path(const char *const path) {
     if (strstr(path, "..") != NULL) {
         shutdown("path contains forbidden parent references");
     }
     if (path[0] == '/') {
         shutdown("absolute paths are forbidden");
+    }
+
+    for (const char *character = path; *character != '\0'; character++) {
+        if ((unsigned char)*character < 0x20 || *character == 0x7f) {
+            shutdown("path contains control characters");
+        }
+    }
+
+    char path_copy[PATH_SIZE];
+    char parent_dir[PATH_MAX];  // PATH_MAX from limits.h
+    char working_dir[PATH_MAX];
+
+    snprintf(path_copy, sizeof path_copy, "%s", path);
+
+    if (realpath(dirname(path_copy), parent_dir) == NULL || realpath(".", working_dir) == NULL) {
+        shutdown_with_system_error("cannot resolve file path");
+    }
+
+    const size_t working_dir_len = strlen(working_dir);
+
+    if (strncmp(parent_dir, working_dir, working_dir_len) != 0
+        || (parent_dir[working_dir_len] != '\0' && parent_dir[working_dir_len] != '/')) {
+        shutdown("path leaves the working directory");
     }
 }
 
@@ -825,6 +853,15 @@ int main(int argument_count, char **argument_values)
 
     const char *const command_name = argument_values[1];
 
+    static const char *const known_commands[] = {"init", "encrypt", "decrypt", "shred"};
+
+    log_command = "unknown";
+    for (size_t command_index = 0; command_index < 4; command_index++) {
+        if (strcmp(command_name, known_commands[command_index]) == 0) {
+            log_command = known_commands[command_index];
+        }
+    }
+
     for (int argument_index = 2; argument_index < argument_count; argument_index++) {
         if (strcmp(argument_values[argument_index], "--user") == 0) {
             if (username != NULL || argument_index + 1 >= argument_count) {
@@ -849,6 +886,8 @@ int main(int argument_count, char **argument_values)
 
     verify_user(username);
 
+    log_user = username;
+
     if (file_path != NULL) {
         validate_path(file_path);
     }
@@ -865,5 +904,6 @@ int main(int argument_count, char **argument_values)
         shutdown(usage_message);
     }
 
+    log_event("INFO", "completed", NULL);
     return 0;
 }
