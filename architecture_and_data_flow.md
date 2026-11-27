@@ -25,40 +25,42 @@ flowchart LR
     KEYS -- "file key" --> STREAM
     STREAM <--> DATA
     VAL -.-> LOGF
+
 ```
 
 ## Keys
 
 `password → Argon2id → KEK → unwraps master key (USER.profile) → unwraps file key (USER.keys/ID.key) → decrypts FILE.enc`
 
-- Every file has its own random key. Deleting its key file makes the `.enc` file impossible to decrypt.
-- All keys are held in locked memory and wiped after use. Core dumps are disabled.
+* Every file has its own random key. Deleting its key file makes the `.enc` file impossible to decrypt.
+* All keys are held in locked memory and wiped after use. Core dumps are disabled.
+
+## Components
+
+* Argument parser and validator: `is_valid_username`, `validate_path`.
+* Authentication: `read_password` without echo, Argon2id `MODERATE`.
+* Key wrapping: XChaCha20-Poly1305.
+* Stream encryption: `crypto_secretstream`, 64 KiB chunks.
+* File I/O: `O_NOFOLLOW | O_EXCL`, `fstat` on the file descriptor, owner check.
+* Logger.
 
 ## On disk
 
 All of these live in `./.secure_files/`: folders `0700`, files `0600`.
 
 | File | Bytes | Contents |
-|---|---|---|
-| `USER.profile` | 88 | salt, nonce, wrapped master key, tag |
-| `USER.keys/ID.key` | 72 | nonce, wrapped file key, tag |
-| `FILE.enc` | 44 + data | `SF01`, file ID, stream header, then 64 KiB chunks with a tag each |
+| --- | --- | --- |
+| `USER.profile` | 88 | salt 16 + nonce 24 + wrapped master key 32 + tag 16 |
+| `USER.keys/ID.key` | 72 | nonce 24 + wrapped file key 32 + tag 16 (the AD is the `.enc` header) |
+| `FILE.enc` | 44 + data | `SF01` (4) + file ID (16) + secretstream header (24) = 44 B. Encrypted 64 KiB chunks follow. Each chunk includes a 17-byte tag |
 
 ## Trust boundaries
 
-- **Input:** the user name must equal your login. Paths must be relative, without `..`.
-- **Disk:** all secret data is authenticated, files are checked on the open handle, and existing outputs are never
-  overwritten.
-- **Other users:** private folders and files, and you must own the input file.
-- **Memory:** locked buffers, wiped after use.
+User input. Local disk. Other local users. Process memory.
 
 ## Flows
 
-- **init:** password → Argon2id → wrap a new master key → write the profile.
-- **encrypt:** password → new file key → write the key file → write `FILE.enc` → delete `FILE`.
-- **decrypt:** password → unwrap the file key → write `FILE`, checking each chunk.
-- **shred:** password → overwrite and delete the key file and `FILE.enc`.
-
-## Libraries
-
-libsodium 1.0.18 only: audited and hard to misuse. OpenSSL was not used because it is larger and easier to misuse.
+* **init**: password ×2 → Argon2id → KEK → wrap a random MEK → profile.
+* **encrypt**: validate → open the input → password → unwrap MEK → new file key → wrap it into the `.key` file → stream to `.enc` → overwrite and remove the original.
+* **decrypt**: the reverse of the encrypt process.
+* **shred**: password → overwrite and remove the `.key` file → overwrite and remove the `.enc` file.
