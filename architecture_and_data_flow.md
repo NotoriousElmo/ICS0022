@@ -46,12 +46,12 @@ flowchart LR
 
 ## On disk
 
-All of these live in `./.secure_files/`: folders `0700`, files `0600`.
+The profile and key files live in `./.secure_files/` (folders `0700`). `FILE.enc` is written next to the original. All files are `0600`.
 
 | File | Bytes | Contents |
 | --- | --- | --- |
 | `USER.profile` | 88 | salt 16 + nonce 24 + wrapped master key 32 + tag 16 |
-| `USER.keys/ID.key` | 72 | nonce 24 + wrapped file key 32 + tag 16 (the AD is the `.enc` header) |
+| `USER.keys/ID.key` | 72 | nonce 24 + wrapped file key 32 + tag 16 (the AD is `SF01` + file ID, the first 20 bytes of the `.enc` header) |
 | `FILE.enc` | 44 + data | `SF01` (4) + file ID (16) + secretstream header (24) = 44 B. Encrypted 64 KiB chunks follow. Each chunk includes a 17-byte tag |
 
 ## Trust boundaries

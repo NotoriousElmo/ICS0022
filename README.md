@@ -11,6 +11,7 @@ A local single user command line tool for Linux and WSL. It encrypts, decrypts a
 Clone onto the Linux filesystem. Do not use `/mnt/c` because file permissions fail there.
 
 ```bash
+sudo apt update
 sudo apt install build-essential libsodium-dev git
 git clone https://github.com/NotoriousElmo/ICS0022.git
 cd ICS0022/secure_files
@@ -45,9 +46,8 @@ C17 provides direct control over memory and file handles. Libsodium is audited a
 
 ## State after Checkpoint 3
 
-The tool can initialise a user profile. It can encrypt, decrypt and shred files. The `encrypt` command overwrites the original plaintext before deleting it. Symlinked folders are evaluated using `realpath` and rejected if they leave the working directory. Structured logging records all successes and failures to a restricted file. Memory is securely wiped on all exit paths. The code passes all tests.
+The tool can initialise a user profile. It can encrypt, decrypt and shred files. The `encrypt` command overwrites the original plaintext before deleting it. Symlinked folders are evaluated using `realpath` and rejected if they leave the working directory. Structured logging records all successes and failures to a restricted file. Passwords and keys are kept in locked memory and wiped as soon as they are no longer needed. The code passes all tests.
 
 
-- Design [architecture_and_data_flow.md](https://www.google.com/search?q=architecture_and_data_flow.md)
-
-- Threats [threat_model_matrix.md](https://www.google.com/search?q=threat_model_matrix.md)
+- Design: [architecture_and_data_flow.md](architecture_and_data_flow.md)
+- Threats: [threat_model_matrix.md](threat_model_matrix.md)
