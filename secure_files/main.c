@@ -22,7 +22,8 @@
 #define TAG crypto_aead_xchacha20poly1305_ietf_ABYTES
 #define WRAPPED (NONCE + KEY + TAG)
 #define SALT crypto_pwhash_SALTBYTES
-#define PROFILE_SIZE (SALT + WRAPPED)
+#define HASH_STR_SIZE crypto_pwhash_STRBYTES
+#define PROFILE_SIZE (HASH_STR_SIZE + SALT + WRAPPED)
 
 #define STREAM_HEADER crypto_secretstream_xchacha20poly1305_HEADERBYTES
 #define STREAM_TAG crypto_secretstream_xchacha20poly1305_ABYTES
@@ -291,13 +292,16 @@ static void initialise_profile(const char *const username)
     char password[PASSPHRASE_SIZE];
     char repeated_password[PASSPHRASE_SIZE];
     unsigned char profile[PROFILE_SIZE];
-    unsigned char master_key[KEY];
-    unsigned char key_encryption_key[KEY];
+    
+    unsigned char *master_key = sodium_malloc(KEY);
+    unsigned char *key_encryption_key = sodium_malloc(KEY);
+
+    if (master_key == NULL || key_encryption_key == NULL) {
+        shutdown_with_system_error("cannot allocate locked memory");
+    }
 
     lock_or_fail(password, sizeof password);
     lock_or_fail(repeated_password, sizeof repeated_password);
-    lock_or_fail(master_key, sizeof master_key);
-    lock_or_fail(key_encryption_key, sizeof key_encryption_key);
 
     create_priv_dir(store_directory());
 
@@ -313,22 +317,28 @@ static void initialise_profile(const char *const username)
     const bool passwords_match = strcmp(password, repeated_password) == 0;
     sodium_munlock(repeated_password, sizeof repeated_password);
 
-    if (!passwords_match || strlen(password) < 12) {
+    if (!passwords_match || strlen(password) < 15) {
         sodium_munlock(password, sizeof password);
-        shutdown(passwords_match ? "password is too short (min 12 chars)" : "passwords don't match");
+        sodium_free(master_key);
+        sodium_free(key_encryption_key);
+        shutdown(passwords_match ? "password is too short (min 15 chars)" : "passwords don't match");
     }
 
-    // profile layout: [salt | nonce | wrapped master key | tag]
-    randombytes_buf(profile, SALT);
+    if (crypto_pwhash_str((char *)profile, password, strlen(password), crypto_pwhash_OPSLIMIT_MODERATE, crypto_pwhash_MEMLIMIT_MODERATE) != 0) {
+        shutdown("password hashing failed");
+    }
+
+    // profile layout: [hash | salt | nonce | wrapped master key | tag]
+    randombytes_buf(profile + HASH_STR_SIZE, SALT);
     randombytes_buf(master_key, KEY);
 
-    derive_key_encryption_key(key_encryption_key, password, profile);
+    derive_key_encryption_key(key_encryption_key, password, profile + HASH_STR_SIZE);
     sodium_munlock(password, sizeof password);
 
-    // salt is bound as additional data so it cannot be swapped undetected
-    const int wrap_code = wrap_key(profile + SALT, master_key, key_encryption_key, profile, SALT);
-    sodium_munlock(key_encryption_key, sizeof key_encryption_key);
-    sodium_munlock(master_key, sizeof master_key);
+    // hash and salt are bound as additional data so they cannot be swapped undetected
+    const int wrap_code = wrap_key(profile + HASH_STR_SIZE + SALT, master_key, key_encryption_key, profile, HASH_STR_SIZE + SALT);
+    sodium_free(key_encryption_key);
+    sodium_free(master_key);
 
     if (wrap_code != 0) {
         shutdown("couldn't wrap the master key");
@@ -480,15 +490,18 @@ static void build_key_path(char *const key_path, const char *const username, con
     }
 }
 
-static void load_master_key(const char *const username, unsigned char master_key[KEY])
+static void load_master_key(const char *const username, unsigned char *const master_key)
 {
     char profile_path[PATH_SIZE];
     char password[PASSPHRASE_SIZE];
     unsigned char profile[PROFILE_SIZE];
-    unsigned char key_encryption_key[KEY];
+    unsigned char *key_encryption_key = sodium_malloc(KEY);
+
+    if (key_encryption_key == NULL) {
+        shutdown_with_system_error("cannot allocate locked memory");
+    }
 
     lock_or_fail(password, sizeof password);
-    lock_or_fail(key_encryption_key, sizeof key_encryption_key);
 
     build_profile_path(profile_path, username);
 
@@ -507,11 +520,16 @@ static void load_master_key(const char *const username, unsigned char master_key
     }
 
     read_password("Enter password: ", password, sizeof password);
-    derive_key_encryption_key(key_encryption_key, password, profile);
+
+    if (crypto_pwhash_str_verify((char *)profile, password, strlen(password)) != 0) {
+        shutdown("wrong password or corrupted profile");
+    }
+
+    derive_key_encryption_key(key_encryption_key, password, profile + HASH_STR_SIZE);
     sodium_munlock(password, sizeof password);
 
-    const int return_code = unwrap_key(master_key, profile + SALT, key_encryption_key, profile, SALT);
-    sodium_munlock(key_encryption_key, sizeof key_encryption_key);
+    const int return_code = unwrap_key(master_key, profile + HASH_STR_SIZE + SALT, key_encryption_key, profile, HASH_STR_SIZE + SALT);
+    sodium_free(key_encryption_key);
 
     if (return_code != 0) {
         shutdown("wrong password or corrupted profile");
@@ -583,13 +601,15 @@ static void encrypt_file(const char *const username, const char *const file_path
     char encrypted_path[PATH_SIZE];
     char key_path[PATH_SIZE];
     unsigned char header[HEADER_SIZE];
-    unsigned char master_key[KEY];
-    unsigned char file_key[KEY];
+    unsigned char *master_key = sodium_malloc(KEY);
+    unsigned char *file_key = sodium_malloc(KEY);
     unsigned char wrapped_key[WRAPPED];
     crypto_secretstream_xchacha20poly1305_state state;
 
-    lock_or_fail(master_key, sizeof master_key);
-    lock_or_fail(file_key, sizeof file_key);
+    if (master_key == NULL || file_key == NULL) {
+        shutdown_with_system_error("cannot allocate locked memory");
+    }
+
     lock_or_fail(&state, sizeof state);
 
     build_the_encrypted_path(encrypted_path, file_path);
@@ -609,8 +629,8 @@ static void encrypt_file(const char *const username, const char *const file_path
     const int init_code = crypto_secretstream_xchacha20poly1305_init_push(&state, header + STREAM_AT, file_key);
     const int wrap_code = wrap_key(wrapped_key, file_key, master_key, header, STREAM_AT);
 
-    sodium_munlock(master_key, sizeof master_key);
-    sodium_munlock(file_key, sizeof file_key);
+    sodium_free(master_key);
+    sodium_free(file_key);
 
     if (init_code != 0 || wrap_code != 0) {
         sodium_memzero(&state, sizeof state);
@@ -739,13 +759,15 @@ static void decrypt_file(const char *const username, const char *const file_path
     char decrypted_path[PATH_SIZE];
     char key_path[PATH_SIZE];
     unsigned char header[HEADER_SIZE];
-    unsigned char master_key[KEY];
-    unsigned char file_key[KEY];
+    unsigned char *master_key = sodium_malloc(KEY);
+    unsigned char *file_key = sodium_malloc(KEY);
     unsigned char wrapped_key[WRAPPED];
     crypto_secretstream_xchacha20poly1305_state state;
 
-    lock_or_fail(master_key, sizeof master_key);
-    lock_or_fail(file_key, sizeof file_key);
+    if (master_key == NULL || file_key == NULL) {
+        shutdown_with_system_error("cannot allocate locked memory");
+    }
+
     lock_or_fail(&state, sizeof state);
 
     build_decrypted_file_path(decrypted_path, file_path);
@@ -766,14 +788,14 @@ static void decrypt_file(const char *const username, const char *const file_path
 
     const int unwrap_code = unwrap_key(file_key, wrapped_key, master_key, header, STREAM_AT);    // a key file belonging to another file is rejected
 
-    sodium_munlock(master_key, sizeof master_key);
+    sodium_free(master_key);
 
     if (unwrap_code != 0) {
         shutdown("cannot unwrap file key, key file or header is corrupted");
     }
     const int init_code = crypto_secretstream_xchacha20poly1305_init_pull(&state, header + STREAM_AT, file_key);
 
-    sodium_munlock(file_key, sizeof file_key);
+    sodium_free(file_key);
 
     if (init_code != 0) {
         sodium_memzero(&state, sizeof state);
@@ -815,9 +837,11 @@ static void decrypt_file(const char *const username, const char *const file_path
 static void shred_file(const char *const username, const char *const file_path) {
     char key_path[PATH_SIZE];
     unsigned char header[HEADER_SIZE];
-    unsigned char master_key[KEY];
+    unsigned char *master_key = sodium_malloc(KEY);
 
-    lock_or_fail(master_key, sizeof master_key);
+    if (master_key == NULL) {
+        shutdown_with_system_error("cannot allocate locked memory");
+    }
 
     const int input_file_descriptor = open_input_file(file_path, MAXIMUM_ENCRYPTED_SIZE);
 
@@ -836,7 +860,7 @@ static void shred_file(const char *const username, const char *const file_path) 
     }
 
     load_master_key(username, master_key);
-    sodium_munlock(master_key, sizeof master_key);
+    sodium_free(master_key);
 
     if (overwrite_and_remove_file(key_path) != 0) {
         shutdown_with_system_error("cannot destroy file key");
@@ -925,6 +949,14 @@ int main(int argument_count, char **argument_values)
 
     if (sodium_init() < 0) {
         shutdown("libsodium failed to initialise");
+    }
+
+    struct stat working_dir_status;
+    if (stat(".", &working_dir_status) != 0) {
+        shutdown_with_system_error("cannot inspect working directory");
+    }
+    if ((working_dir_status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        shutdown("working directory is writable by other users");
     }
 
     setvbuf(stdin, NULL, _IONBF, 0);

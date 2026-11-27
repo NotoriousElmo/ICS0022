@@ -16,10 +16,10 @@ sudo apt install build-essential libsodium-dev git
 git clone https://github.com/NotoriousElmo/ICS0022.git
 cd ICS0022/secure_files
 gcc -std=c17 -Wall -Wextra main.c -o secure_files -lsodium
-
+cd ..
 ```
 
-Remove windows line endings
+Remove windows line endings:
 
 ```bash
 sed -i 's/\r$//' test.sh
@@ -27,7 +27,7 @@ sed -i 's/\r$//' test.sh
 
 ## Use
 
-The tool creates `.secure_files/` and `secure_files.log` in the current folder.
+The tool creates `.secure_files/` and `secure_files.log` in the current folder. Passwords must be at least 15 bytes long (counted in bytes, not characters).
 
 ```bash
 ./secure_files init    --user "$(whoami)"
@@ -37,7 +37,11 @@ The tool creates `.secure_files/` and `secure_files.log` in the current folder.
 
 ```
 
-Paths must be relative and without `..` parent references. Symbolic links are rejected. `encrypt` replaces the original: it overwrites the plaintext and removes it, so no unencrypted copy is left behind. `decrypt` keeps the `.enc` file. `shred` securely deletes a stored file, so it only accepts `NAME.enc` files: it destroys the file's key, then overwrites and removes the `.enc` file. Keys are stored in `./.secure_files/`. Because the original is removed, losing the key directory means losing the files. Any error prints `operation failed`. The reason goes to `./secure_files.log`. The log never contains secrets.
+Paths must be relative and without `..` parent references. The `O_NOFOLLOW` flag rejects symbolic links for the final path component, and `realpath` validation prevents escaping the working directory via symlinked parent folders. 
+
+`encrypt` replaces the original: it overwrites the plaintext and removes it, so no unencrypted copy is left behind. `decrypt` keeps the `.enc` file. `shred` securely deletes a stored file. It verifies the `SF01` marker and the existence of the file's key rather than enforcing a `.enc` file extension: it destroys the file's key, then overwrites and removes the ciphertext. 
+
+Keys are stored in `./.secure_files/`. Because the original is removed, losing the key directory means losing the files. Any error prints `operation failed`. The reason goes to `./secure_files.log`. The log never contains secrets.
 
 ## Test
 
@@ -49,12 +53,11 @@ chmod +x test.sh
 
 ## Why C17 and libsodium
 
-C17 provides direct control over memory and file handles. Libsodium is audited and hard to misuse. It provides Argon2id, XChaCha20-Poly1305, `secretstream`, `sodium_mlock` and `sodium_memzero`. It is available in the Ubuntu repositories. OpenSSL was not chosen because its API is larger and easier to misuse.
+C17 provides direct control over memory and file handles. Libsodium is audited and hard to misuse. It provides Argon2id, XChaCha20-Poly1305, `secretstream`, `sodium_mlock`, `sodium_malloc`, and `sodium_memzero`. It is available in the Ubuntu repositories. OpenSSL was not chosen because its API is larger and easier to misuse.
 
 ## State after Checkpoint 3
 
 The tool can initialise a user profile. It can encrypt, decrypt and shred files. The `encrypt` command overwrites the original plaintext before deleting it. Symlinked folders are evaluated using `realpath` and rejected if they leave the working directory. Structured logging records all successes and failures to a restricted file. Passwords and keys are kept in locked memory and wiped as soon as they are no longer needed. The code passes all tests.
-
 
 - Design: [architecture_and_data_flow.md](architecture_and_data_flow.md)
 - Threats: [threat_model_matrix.md](threat_model_matrix.md)

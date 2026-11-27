@@ -4,6 +4,9 @@ set -u
 BINARY_PATH="$(cd "$(dirname "$0")" && pwd)/secure_files/secure_files"
 WORK_DIRECTORY=$(mktemp -d)
 
+# remove the working directory however the script ends, so repeated runs leave nothing in /tmp
+trap 'cd / && rm -rf "$WORK_DIRECTORY"' EXIT
+
 cd "$WORK_DIRECTORY"
 if [ $? -ne 0 ]; then
     echo "FAIL: Could not enter working directory"
@@ -66,23 +69,23 @@ assert_failure_no_password() {
 }
 
 # Password validation tests
-assert_failure_with_password "Fails: Initialise with 11 character password" "12345678901\n12345678901" init --user "$USER_NAME"
+assert_failure_with_password "Fails: Initialise with 14 character password" "12345678901234\n12345678901234" init --user "$USER_NAME"
 
-assert_failure_with_password "Fails: Initialise with mismatched passwords" "TestPass1234\nTestPass1235" init --user "$USER_NAME"
+assert_failure_with_password "Fails: Initialise with mismatched passwords" "TestPassword123\nTestPassword124" init --user "$USER_NAME"
 
-echo -e "123456789012\n123456789012" | "$BINARY_PATH" init --user "$USER_NAME" >/dev/null 2>&1
+echo -e "123456789012345\n123456789012345" | "$BINARY_PATH" init --user "$USER_NAME" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
-    fail_test "Succeeds: Initialise with 12 character password"
+    fail_test "Succeeds: Initialise with 15 character password"
 else
-    pass_test "Succeeds: Initialise with 12 character password"
+    pass_test "Succeeds: Initialise with 15 character password"
 fi
 rm -rf .secure_files
 
-echo -e "1234567890123\n1234567890123" | "$BINARY_PATH" init --user "$USER_NAME" >/dev/null 2>&1
+echo -e "1234567890123456\n1234567890123456" | "$BINARY_PATH" init --user "$USER_NAME" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
-    fail_test "Succeeds: Initialise with 13 character password"
+    fail_test "Succeeds: Initialise with 16 character password"
 else
-    pass_test "Succeeds: Initialise with 13 character password"
+    pass_test "Succeeds: Initialise with 16 character password"
 fi
 rm -rf .secure_files
 
@@ -101,7 +104,7 @@ assert_failure_with_password "Fails: Initialise with 255 character password" "${
 rm -rf .secure_files
 
 # Permanent initialisation for remaining tests
-echo -e "TestPass1234\nTestPass1234" | "$BINARY_PATH" init --user "$USER_NAME" >/dev/null 2>&1
+echo -e "TestPassword123\nTestPassword123" | "$BINARY_PATH" init --user "$USER_NAME" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Initialise main profile"
 else
@@ -112,14 +115,14 @@ fi
 head -c 0 /dev/urandom > "file_0"
 cp "file_0" ".original_0"
 
-echo "TestPass1234" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_0" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_0" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Encrypt file of size 0"
 else
     pass_test "Succeeds: Encrypt file of size 0"
 fi
 
-echo "TestPass1234" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_0.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_0.enc" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Decrypt file of size 0"
 else
@@ -137,14 +140,14 @@ fi
 head -c 1 /dev/urandom > "file_1"
 cp "file_1" ".original_1"
 
-echo "TestPass1234" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_1" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_1" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Encrypt file of size 1"
 else
     pass_test "Succeeds: Encrypt file of size 1"
 fi
 
-echo "TestPass1234" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_1.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_1.enc" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Decrypt file of size 1"
 else
@@ -162,14 +165,14 @@ fi
 head -c 65536 /dev/urandom > "file_65536"
 cp "file_65536" ".original_65536"
 
-echo "TestPass1234" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_65536" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_65536" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Encrypt file of size 65536"
 else
     pass_test "Succeeds: Encrypt file of size 65536"
 fi
 
-echo "TestPass1234" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_65536.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_65536.enc" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Decrypt file of size 65536"
 else
@@ -187,14 +190,14 @@ fi
 head -c 65537 /dev/urandom > "file_65537"
 cp "file_65537" ".original_65537"
 
-echo "TestPass1234" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_65537" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_65537" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Encrypt file of size 65537"
 else
     pass_test "Succeeds: Encrypt file of size 65537"
 fi
 
-echo "TestPass1234" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_65537.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_65537.enc" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Decrypt file of size 65537"
 else
@@ -212,14 +215,14 @@ fi
 head -c 1048576 /dev/urandom > "file_1048576"
 cp "file_1048576" ".original_1048576"
 
-echo "TestPass1234" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_1048576" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" encrypt --user "$USER_NAME" "file_1048576" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Encrypt file of size 1048576"
 else
     pass_test "Succeeds: Encrypt file of size 1048576"
 fi
 
-echo "TestPass1234" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_1048576.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" decrypt --user "$USER_NAME" "file_1048576.enc" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Decrypt file of size 1048576"
 else
@@ -237,7 +240,7 @@ fi
 echo "This is confidential data for tampering tests" > "victim.txt"
 cp "victim.txt" ".original_victim"
 
-echo "TestPass1234" | "$BINARY_PATH" encrypt --user "$USER_NAME" "victim.txt" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" encrypt --user "$USER_NAME" "victim.txt" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Encrypt victim file"
 else
@@ -268,7 +271,7 @@ cp "victim.txt.enc" "pristine_victim.txt.enc"
 cp "pristine_victim.txt.enc" "tampered_victim.txt.enc"
 printf '\xff' | dd of="tampered_victim.txt.enc" bs=1 seek=60 conv=notrunc 2>/dev/null
 
-echo "TestPass1234" | "$BINARY_PATH" decrypt --user "$USER_NAME" "tampered_victim.txt.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" decrypt --user "$USER_NAME" "tampered_victim.txt.enc" >/dev/null 2>&1
 if [ $? -eq 0 ]; then
     fail_test "Fails: Decrypt a tampered ciphertext"
 else
@@ -285,7 +288,7 @@ fi
 cp "pristine_victim.txt.enc" "truncated_victim.txt.enc"
 truncate -s -5 "truncated_victim.txt.enc"
 
-echo "TestPass1234" | "$BINARY_PATH" decrypt --user "$USER_NAME" "truncated_victim.txt.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" decrypt --user "$USER_NAME" "truncated_victim.txt.enc" >/dev/null 2>&1
 if [ $? -eq 0 ]; then
     fail_test "Fails: Decrypt a truncated ciphertext"
 else
@@ -303,7 +306,7 @@ key_directory=".secure_files/${USER_NAME}.keys"
 key_count_before_shred=$(find "${key_directory}" -type f | wc -l)
 cp "pristine_victim.txt.enc" "backup_victim.txt.enc"
 
-echo "TestPass1234" | "$BINARY_PATH" shred --user "$USER_NAME" "pristine_victim.txt.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" shred --user "$USER_NAME" "pristine_victim.txt.enc" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Execute shred command"
 else
@@ -325,7 +328,7 @@ else
     pass_test "Succeeds: Remove exactly one key file during shred"
 fi
 
-echo "TestPass1234" | "$BINARY_PATH" decrypt --user "$USER_NAME" "backup_victim.txt.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" decrypt --user "$USER_NAME" "backup_victim.txt.enc" >/dev/null 2>&1
 if [ $? -eq 0 ]; then
     fail_test "Fails: Decrypt a file with a shredded key"
 else
@@ -335,7 +338,7 @@ fi
 # Set up a target for failure tests
 echo "target file" > "target.txt"
 cp "target.txt" "backup_target.txt"
-echo "TestPass1234" | "$BINARY_PATH" encrypt --user "$USER_NAME" "target.txt" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" encrypt --user "$USER_NAME" "target.txt" >/dev/null 2>&1
 
 # Authentication failures (target.txt must not exist yet, or decrypt stops before it reads the password)
 other_user="nobody"
@@ -343,7 +346,7 @@ if [ "$USER_NAME" = "nobody" ]; then
     other_user="root"
 fi
 
-assert_failure_with_password "Fails: Decrypt with wrong password" "WrongPass1234" decrypt --user "$USER_NAME" "target.txt.enc"
+assert_failure_with_password "Fails: Decrypt with wrong password" "WrongPassword12" decrypt --user "$USER_NAME" "target.txt.enc"
 
 assert_failure_with_password "Fails: Decrypt with empty password" "" decrypt --user "$USER_NAME" "target.txt.enc"
 
@@ -354,66 +357,66 @@ else
     pass_test "Succeeds: Reject both bad passwords at the password check"
 fi
 
-assert_failure_with_password "Fails: Decrypt as wrong user" "TestPass1234" decrypt --user "$other_user" "target.txt.enc"
+assert_failure_with_password "Fails: Decrypt as wrong user" "TestPassword123" decrypt --user "$other_user" "target.txt.enc"
 
-assert_failure_with_password "Fails: Initialise existing profile" "TestPass1234\nTestPass1234" init --user "$USER_NAME"
+assert_failure_with_password "Fails: Initialise existing profile" "TestPassword123\nTestPassword123" init --user "$USER_NAME"
 
 cp "backup_target.txt" "target.txt"
 
 # Argument parsing failures
 assert_failure_no_password "Fails: Run with no arguments"
 
-assert_failure_with_password "Fails: Run unknown command" "TestPass1234" boguscmd --user "$USER_NAME" "target.txt"
+assert_failure_with_password "Fails: Run unknown command" "TestPassword123" boguscmd --user "$USER_NAME" "target.txt"
 
-assert_failure_with_password "Fails: Encrypt without user flag" "TestPass1234" encrypt "target.txt"
+assert_failure_with_password "Fails: Encrypt without user flag" "TestPassword123" encrypt "target.txt"
 
-assert_failure_with_password "Fails: Encrypt with double user flag" "TestPass1234" encrypt --user "$USER_NAME" --user "$USER_NAME" "target.txt"
+assert_failure_with_password "Fails: Encrypt with double user flag" "TestPassword123" encrypt --user "$USER_NAME" --user "$USER_NAME" "target.txt"
 
-assert_failure_with_password "Fails: Encrypt with two file paths" "TestPass1234" encrypt --user "$USER_NAME" "target.txt" "other.txt"
+assert_failure_with_password "Fails: Encrypt with two file paths" "TestPassword123" encrypt --user "$USER_NAME" "target.txt" "other.txt"
 
-assert_failure_with_password "Fails: Initialise with a file path" "TestPass1234" init --user "$USER_NAME" "target.txt"
+assert_failure_with_password "Fails: Initialise with a file path" "TestPassword123" init --user "$USER_NAME" "target.txt"
 
 # Invalid names
-assert_failure_with_password "Fails: Encrypt with semicolon in username" "TestPass1234" encrypt --user "bob;id" "target.txt"
+assert_failure_with_password "Fails: Encrypt with semicolon in username" "TestPassword123" encrypt --user "bob;id" "target.txt"
 
-assert_failure_with_password "Fails: Encrypt with 33 character username" "TestPass1234" encrypt --user "a12345678901234567890123456789012" "target.txt"
+assert_failure_with_password "Fails: Encrypt with 33 character username" "TestPassword123" encrypt --user "a12345678901234567890123456789012" "target.txt"
 
 # Path validation failures
-assert_failure_with_password "Fails: Encrypt using parent traversal" "TestPass1234" encrypt --user "$USER_NAME" "../target.txt"
+assert_failure_with_password "Fails: Encrypt using parent traversal" "TestPassword123" encrypt --user "$USER_NAME" "../target.txt"
 
-assert_failure_with_password "Fails: Encrypt using absolute path" "TestPass1234" encrypt --user "$USER_NAME" "/etc/hostname"
+assert_failure_with_password "Fails: Encrypt using absolute path" "TestPassword123" encrypt --user "$USER_NAME" "/etc/hostname"
 
-assert_failure_with_password "Fails: Encrypt with empty path string" "TestPass1234" encrypt --user "$USER_NAME" ""
+assert_failure_with_password "Fails: Encrypt with empty path string" "TestPassword123" encrypt --user "$USER_NAME" ""
 
-assert_failure_with_password "Fails: Encrypt missing file" "TestPass1234" encrypt --user "$USER_NAME" "does_not_exist.txt"
+assert_failure_with_password "Fails: Encrypt missing file" "TestPassword123" encrypt --user "$USER_NAME" "does_not_exist.txt"
 
 mkdir -p "directory_target"
-assert_failure_with_password "Fails: Encrypt a directory" "TestPass1234" encrypt --user "$USER_NAME" "directory_target"
+assert_failure_with_password "Fails: Encrypt a directory" "TestPassword123" encrypt --user "$USER_NAME" "directory_target"
 
 ln -s "target.txt" "symlink_target.txt"
-assert_failure_with_password "Fails: Encrypt a symbolic link" "TestPass1234" encrypt --user "$USER_NAME" "symlink_target.txt"
+assert_failure_with_password "Fails: Encrypt a symbolic link" "TestPassword123" encrypt --user "$USER_NAME" "symlink_target.txt"
 
 long_filename=$(printf "%01100d" 1)
-assert_failure_with_password "Fails: Encrypt a file with a path exceeding limits" "TestPass1234" encrypt --user "$USER_NAME" "$long_filename"
+assert_failure_with_password "Fails: Encrypt a file with a path exceeding limits" "TestPassword123" encrypt --user "$USER_NAME" "$long_filename"
 
-assert_failure_with_password "Fails: Decrypt a plaintext file without .enc suffix" "TestPass1234" decrypt --user "$USER_NAME" "target.txt"
+assert_failure_with_password "Fails: Decrypt a plaintext file without .enc suffix" "TestPassword123" decrypt --user "$USER_NAME" "target.txt"
 
 # The tool's own files must never be encrypted, because encrypt overwrites and removes the original
 profile_path=".secure_files/${USER_NAME}.profile"
 cp "$profile_path" ".original_profile"
 first_key_file=$(find "${key_directory}" -type f -name '*.key' | head -n 1)
 
-assert_failure_with_password "Fails: Encrypt the profile" "TestPass1234" encrypt --user "$USER_NAME" "$profile_path"
+assert_failure_with_password "Fails: Encrypt the profile" "TestPassword123" encrypt --user "$USER_NAME" "$profile_path"
 
-assert_failure_with_password "Fails: Encrypt a key file" "TestPass1234" encrypt --user "$USER_NAME" "$first_key_file"
+assert_failure_with_password "Fails: Encrypt a key file" "TestPassword123" encrypt --user "$USER_NAME" "$first_key_file"
 
-assert_failure_with_password "Fails: Encrypt the log file" "TestPass1234" encrypt --user "$USER_NAME" "secure_files.log"
+assert_failure_with_password "Fails: Encrypt the log file" "TestPassword123" encrypt --user "$USER_NAME" "secure_files.log"
 
 ln -s . "working_dir_alias"
-assert_failure_with_password "Fails: Encrypt the profile through a symlinked folder" "TestPass1234" encrypt --user "$USER_NAME" "working_dir_alias/${profile_path}"
+assert_failure_with_password "Fails: Encrypt the profile through a symlinked folder" "TestPassword123" encrypt --user "$USER_NAME" "working_dir_alias/${profile_path}"
 
 ln "$profile_path" "profile_hard_link"
-assert_failure_with_password "Fails: Encrypt a hard link to the profile" "TestPass1234" encrypt --user "$USER_NAME" "profile_hard_link"
+assert_failure_with_password "Fails: Encrypt a hard link to the profile" "TestPassword123" encrypt --user "$USER_NAME" "profile_hard_link"
 rm "profile_hard_link"
 
 cmp -s "$profile_path" ".original_profile"
@@ -425,7 +428,7 @@ fi
 
 # the helpers always run BINARY_PATH, so the copy that encrypts itself is run directly
 cp "$BINARY_PATH" "program_copy"
-echo "TestPass1234" | ./program_copy encrypt --user "$USER_NAME" "program_copy" >/dev/null 2>&1
+echo "TestPassword123" | ./program_copy encrypt --user "$USER_NAME" "program_copy" >/dev/null 2>&1
 program_exit_code=$?
 
 if [ $program_exit_code -eq 0 ] || [ -f "program_copy.enc" ] || ! cmp -s "program_copy" "$BINARY_PATH"; then
@@ -438,7 +441,7 @@ rm -f "program_copy"
 # Locked memory: root can lock memory past the limit, so this only proves something for a normal user
 if [ "$(id -u)" -ne 0 ] && command -v prlimit >/dev/null 2>&1; then
     echo "lock test" > "lock_target.txt"
-    raw_output=$(echo "TestPass1234" | prlimit --memlock=0:0 "$BINARY_PATH" encrypt --user "$USER_NAME" "lock_target.txt" 2>&1)
+    raw_output=$(echo "TestPassword123" | prlimit --memlock=0:0 "$BINARY_PATH" encrypt --user "$USER_NAME" "lock_target.txt" 2>&1)
     lock_exit_code=$?
 
     if [ $lock_exit_code -eq 0 ] || [ ! -f "lock_target.txt" ] || [ -f "lock_target.txt.enc" ]; then
@@ -451,14 +454,14 @@ fi
 # Ownership and permission failures
 # runs only where sudo works without a password prompt, otherwise the file would not exist and the test would prove nothing
 if [ "$(id -u)" -ne 0 ] && sudo -n touch "root_owned.txt" 2>/dev/null; then
-    assert_failure_with_password "Fails: Encrypt a file owned by root" "TestPass1234" encrypt --user "$USER_NAME" "root_owned.txt"
+    assert_failure_with_password "Fails: Encrypt a file owned by root" "TestPassword123" encrypt --user "$USER_NAME" "root_owned.txt"
     sudo -n rm "root_owned.txt"
 fi
 
 echo "read only target" > "readonly.txt"
 chmod 400 "readonly.txt"
 original_inode=$(stat -c %i "readonly.txt")
-assert_failure_with_password "Fails: Encrypt a read-only file" "TestPass1234" encrypt --user "$USER_NAME" "readonly.txt"
+assert_failure_with_password "Fails: Encrypt a read-only file" "TestPassword123" encrypt --user "$USER_NAME" "readonly.txt"
 
 if [ -f "readonly.txt.enc" ]; then
     fail_test "Succeeds: Prevent read only target deletion"
@@ -478,7 +481,7 @@ outside_directory=$(mktemp -d)
 ln -s "$outside_directory" "symlinked_dir"
 echo "target" > "${outside_directory}/escape_target.txt"
 
-assert_failure_with_password "Fails: Encrypt a file inside a symlinked directory" "TestPass1234" encrypt --user "$USER_NAME" "symlinked_dir/escape_target.txt"
+assert_failure_with_password "Fails: Encrypt a file inside a symlinked directory" "TestPassword123" encrypt --user "$USER_NAME" "symlinked_dir/escape_target.txt"
 
 rm -r -- "$outside_directory"
 
@@ -486,20 +489,20 @@ rm -r -- "$outside_directory"
 control_char_name=$(printf "a\x1bb")
 echo "target" > "$control_char_name"
 
-assert_failure_with_password "Fails: Encrypt a file with an ESC control character" "TestPass1234" encrypt --user "$USER_NAME" "$control_char_name"
+assert_failure_with_password "Fails: Encrypt a file with an ESC control character" "TestPassword123" encrypt --user "$USER_NAME" "$control_char_name"
 
 # Valid sub-directory encryption
 mkdir -p "valid_sub"
 echo "target" > "valid_sub/deep_target.txt"
 
-echo "TestPass1234" | "$BINARY_PATH" encrypt --user "$USER_NAME" "valid_sub/deep_target.txt" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" encrypt --user "$USER_NAME" "valid_sub/deep_target.txt" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Encrypt file in a valid subdirectory"
 else
     pass_test "Succeeds: Encrypt file in a valid subdirectory"
 fi
 
-echo "TestPass1234" | "$BINARY_PATH" decrypt --user "$USER_NAME" "valid_sub/deep_target.txt.enc" >/dev/null 2>&1
+echo "TestPassword123" | "$BINARY_PATH" decrypt --user "$USER_NAME" "valid_sub/deep_target.txt.enc" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     fail_test "Succeeds: Decrypt file in a valid subdirectory"
 else
@@ -521,7 +524,7 @@ else
     pass_test "Succeeds: Log successful completion events"
 fi
 
-if grep -F -e "TestPass1234" -e "WrongPass1234" -e "12345678901" -e "TestPass1235" "secure_files.log"; then
+if grep -F -e "TestPassword123" -e "WrongPassword12" -e "12345678901" -e "TestPassword124" "secure_files.log"; then
     fail_test "Succeeds: Keep passwords out of the log file"
 else
     pass_test "Succeeds: Keep passwords out of the log file"
